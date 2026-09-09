@@ -1,11 +1,22 @@
 {
-	"house": {
-		"name": "民居",
-		"cost_gold": 20,
-		"pop_capacity": 8,
-		"texture": "house.png",
+	"hut": {
+		"name": "茅屋",
+		"cost_gold": 10,
+		"pop_capacity": 4,
+		"texture": "hut",
+		"dir": true,
 		"flat": false,
-		"desc": "住 8 人。每月消耗食品，需邻路、有行人往来才发展"
+		"desc": "最简陋的住所。服务好、有饭吃会自动翻修升级"
+	},
+	"tilehouse": {
+		"name": "瓦房",
+		"cost_gold": 0,
+		"pop_capacity": 8,
+		"texture": "house",
+		"dir": true,
+		"flat": false,
+		"buildable": false,
+		"desc": "由茅屋升级而来；四户连片可合建宅院"
 	},
 	"farm": {
 		"name": "农田",
@@ -21,7 +32,8 @@
 		"convert_from": "grain",
 		"convert_to": "flour",
 		"convert_rate": 6,
-		"texture": "mill.png",
+		"texture": "mill",
+		"dir": true,
 		"flat": false,
 		"desc": "每月把至多 6 粮磨成面粉，需邻路"
 	},
@@ -31,7 +43,8 @@
 		"convert_from": "flour",
 		"convert_to": "food",
 		"convert_rate": 6,
-		"texture": "market.png",
+		"texture": "market",
+		"dir": true,
 		"flat": false,
 		"desc": "每月把至多 6 面粉做成食品，需邻路，派挑夫服务民居"
 	},
