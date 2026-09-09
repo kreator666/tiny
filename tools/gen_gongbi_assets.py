@@ -171,4 +171,36 @@ cluster(30, 21, 7, 4)
 
 save(t, "tree.png")
 
+
+# ---------- 道路（土路贴地，被斜投影压成菱形） ----------
+r = paper(32)
+d = ImageDraw.Draw(r, "RGBA")
+d.rectangle([0, 8, 31, 24], fill=(172, 152, 120, 120))   # 路面
+for y in (8, 24):                                         # 路缘墨线
+    d.line([(0, y), (31, y)], fill=INK + (70,), width=1)
+for _ in range(12):                                       # 车辙碎石
+    x, y = rng.randint(0, 31), rng.randint(9, 23)
+    d.point([(x, y)], fill=(120, 102, 78, 160))
+r = r.filter(ImageFilter.GaussianBlur(0.4))
+save(r, "road.png")
+
+
+# ---------- 行人（12x20 宋人装束立牌，透明底） ----------
+VW, VH = 12, 20
+v = Image.new("RGBA", (VW, VH), (0, 0, 0, 0))
+d = ImageDraw.Draw(v)
+ROBE = (96, 106, 126)   # 花青袍
+# 袍身（梯形）
+d.polygon([(6, 6), (3, 9), (2, 18), (10, 18), (9, 9)], fill=ROBE, outline=INK)
+# 衣纹
+d.line([(6, 9), (6, 17)], fill=INK + (120,), width=1)
+# 头
+d.ellipse([3, 0, 9, 6], fill=(224, 192, 158), outline=INK)
+# 幞头（宋帽）
+d.polygon([(3, 1), (9, 1), (8, 3), (4, 3)], fill=INK)
+# 足
+d.line([(4, 18), (4, 19)], fill=INK)
+d.line([(8, 18), (8, 19)], fill=INK)
+save(v, "villager.png")
+
 print("全部完成 ->", os.path.abspath(OUT))

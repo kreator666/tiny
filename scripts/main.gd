@@ -2,6 +2,9 @@ extends Node2D
 ## 游戏主逻辑：网格地图、建筑放置、月份推演、HUD。
 ## 渲染：45° 斜投影（菱形地砖）+ 建筑立牌（billboard）+ 深度排序遮挡。
 ## 视角：滚轮缩放（以鼠标为中心）、中键拖拽平移、WASD/方向键平移、Q/E 旋转 90°。
+## 核心玩法：法老王式道路+行人系统——
+##   建筑需邻接道路激活；民居派出行人沿路随机行走，
+##   行人经过的道路格会“服务”相邻民居，无服务的民居停止发展。
 ## 时间流速：每 2 秒 = 1 个月。
 ## 素材：程序化生成工笔画风（tools/gen_gongbi_assets.py）。
 
@@ -23,9 +26,18 @@ const ISO_Y := Vector2(-1, 0.5)
 # 各旋转方向下的深度排序轴（格子坐标系中“屏幕向下”的方向）
 const DEPTH_VECS := [Vector2(1, 1), Vector2(1, -1), Vector2(-1, -1), Vector2(-1, 1)]
 
+const DIRS := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
+
+# 行人参数
+const WALK_SPEED := 2.5  # 格/秒
+const WALKER_STEPS := 20  # 每次出行走的步数
+const WALKER_MAX := 60
+const SPAWN_INTERVAL := 3.0  # 每个民居的派人间隔（秒）
+
 const GROUND_0: Texture2D = preload("res://assets/gongbi/ground_0.png")
 const GROUND_1: Texture2D = preload("res://assets/gongbi/ground_1.png")
 const TREE_TEX: Texture2D = preload("res://assets/gongbi/tree.png")
+const VILLAGER_TEX: Texture2D = preload("res://assets/gongbi/villager.png")
 
 # ---------- 状态 ----------
 
@@ -34,12 +46,16 @@ var buildings: Dictionary = {}  # Vector2i 坐标 -> 建筑类型(String)
 var grass: Dictionary = {}  # Vector2i 坐标 -> 草地块变体索引(0/1)
 var trees: Dictionary = {}  # Vector2i 坐标 -> true
 
+var walkers: Array = []  # 每个行人: {pos, cur, nxt, t, left, prev}
+var serviced: Dictionary = {}  # 民居格 -> 最近一次被行人服务的月份序号
+
 var population := 0
 var pop_capacity := 0  # 由民居数量决定，每次变化时重算
 var grain := 100.0
 var gold := 100.0
 var year := 1
 var month := 1
+var _months_total := 0  # 累计月份序号（服务时效判定用）
 
 var selected_tool := ""  # 当前选中的建造类型，空串 = 无
 var hover_cell := Vector2i(-1, -1)
@@ -47,6 +63,7 @@ var message := ""
 
 var _elapsed := 0.0
 var _dragging := false  # 中键拖拽平移中
+var _spawn_accum := 0.0
 
 # 视角状态（世界坐标 = 斜投影后的平面坐标）
 var _rot := 0  # 当前旋转方向 0..3
@@ -59,6 +76,7 @@ var _grain_label: Label
 var _gold_label: Label
 var _date_label: Label
 var _tool_label: Label
+var _walker_label: Label
 var _message_label: Label
 var _tool_buttons := {}
 
@@ -142,6 +160,87 @@ func _zoom_at_mouse(factor: float) -> void:
 	queue_redraw()
 
 
+# ---------- 道路与行人 ----------
+
+func _is_road(cell: Vector2i) -> bool:
+	return buildings.get(cell, "") == "road"
+
+
+func _road_neighbors(cell: Vector2i) -> Array[Vector2i]:
+	var result: Array[Vector2i] = []
+	for dir: Vector2i in DIRS:
+		var nb := cell + dir
+		if _is_road(nb):
+			result.append(nb)
+	return result
+
+
+func _has_adjacent_road(cell: Vector2i) -> bool:
+	return not _road_neighbors(cell).is_empty()
+
+
+func _spawn_walkers() -> void:
+	for cell: Vector2i in buildings:
+		if buildings[cell] != "house" or population <= 0:
+			continue
+		if walkers.size() >= WALKER_MAX:
+			return
+		if not _has_adjacent_road(cell):
+			continue
+		var roads := _road_neighbors(cell)
+		var start: Vector2i = roads[randi() % roads.size()]
+		var next := _choose_next_road(start, cell)
+		if next == Vector2i(-1, -1):
+			continue
+		walkers.append({
+			"pos": Vector2(start),
+			"cur": start,
+			"nxt": next,
+			"prev": cell,
+			"t": 0.0,
+			"left": WALKER_STEPS,
+		})
+		_service_around(start)
+
+
+func _choose_next_road(cur: Vector2i, prev: Vector2i) -> Vector2i:
+	var options: Array[Vector2i] = []
+	for nb: Vector2i in _road_neighbors(cur):
+		if nb != prev:
+			options.append(nb)
+	if options.is_empty():
+		options = _road_neighbors(cur)  # 死胡同：原路返回
+	if options.is_empty():
+		return Vector2i(-1, -1)
+	return options[randi() % options.size()]
+
+
+func _service_around(road_cell: Vector2i) -> void:
+	## 行人到达道路格，服务相邻民居
+	for dir: Vector2i in DIRS:
+		var nb := road_cell + dir
+		if buildings.get(nb, "") == "house":
+			serviced[nb] = _months_total
+
+
+func _update_walkers(delta: float) -> void:
+	for i in range(walkers.size() - 1, -1, -1):
+		var w: Dictionary = walkers[i]
+		w.t += delta * WALK_SPEED
+		if w.t >= 1.0:
+			w.cur = w.nxt
+			w.t = 0.0
+			w.left -= 1
+			_service_around(w.cur)
+			var next: Vector2i = _choose_next_road(w.cur, w.prev)
+			w.prev = w.cur
+			if next == Vector2i(-1, -1) or w.left <= 0:
+				walkers.remove_at(i)
+				continue
+			w.nxt = next
+		w.pos = Vector2(w.cur).lerp(Vector2(w.nxt), minf(w.t, 1.0))
+
+
 # ---------- 输入 ----------
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -220,6 +319,16 @@ func _process(delta: float) -> void:
 		_elapsed = 0.0
 		_advance_month()
 
+	# 行人生成与移动
+	_spawn_accum += delta
+	if _spawn_accum >= SPAWN_INTERVAL:
+		_spawn_accum = 0.0
+		_spawn_walkers()
+	if not walkers.is_empty():
+		_update_walkers(delta)
+		_walker_label.text = "行人：%d" % walkers.size()
+		queue_redraw()
+
 	# 方向键 / WASD 平移
 	var dir := Vector2.ZERO
 	if Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A):
@@ -236,25 +345,47 @@ func _process(delta: float) -> void:
 
 
 func _advance_month() -> void:
-	# 农田产出
+	_months_total += 1
+
+	# 农田产出（需邻接道路，粮食才运得出去）
 	var farm_count := 0
-	for type: String in buildings.values():
-		if type == "farm":
+	for cell: Vector2i in buildings:
+		if buildings[cell] == "farm" and _has_adjacent_road(cell):
 			farm_count += 1
 	grain += farm_count * int(building_defs["farm"]["grain_per_month"])
+
+	# 民居有效容量 = 容量 x 近期有行人往来的民居比例
+	var house_cells: Array[Vector2i] = []
+	for cell: Vector2i in buildings:
+		if buildings[cell] == "house":
+			house_cells.append(cell)
+	var serviced_count := 0
+	for cell: Vector2i in house_cells:
+		if _months_total - int(serviced.get(cell, -999)) <= 1:
+			serviced_count += 1
+	var eff_capacity := 0
+	if not house_cells.is_empty():
+		var ratio := float(serviced_count) / house_cells.size()
+		eff_capacity = int(round(pop_capacity * ratio))
+		if ratio < 0.5 and population > 0:
+			_show_message("部分民居缺乏行人往来，发展停滞")
 
 	# 人口消耗粮食
 	var consumption: int = int(ceil(population * 0.5))
 	if grain >= consumption:
 		grain -= consumption
-		# 有饭吃：人口向容量上限缓慢增长
-		if population < pop_capacity:
-			population = mini(pop_capacity, population + maxi(1, pop_capacity / 20))
-	else:
+		# 有饭吃：人口向有效容量缓慢增长
+		if population < eff_capacity:
+			population = mini(eff_capacity, population + maxi(1, eff_capacity / 20))
+	elif population > 0:
 		grain = 0.0
 		# 饥荒：人口衰减
 		population = maxi(0, population - maxi(1, population / 10))
 		_show_message("饥荒！人口下降")
+
+	# 无人行走的民居会逐渐流失人口
+	if not house_cells.is_empty() and eff_capacity < pop_capacity and population > eff_capacity:
+		population = maxi(eff_capacity, population - maxi(1, population / 20))
 
 	# 税收
 	gold += population * 0.2
@@ -292,6 +423,7 @@ func _on_save_pressed() -> void:
 		"gold": gold,
 		"year": year,
 		"month": month,
+		"months_total": _months_total,
 		"buildings": list,
 		"trees": tree_list,
 	}
@@ -309,8 +441,11 @@ func _on_load_pressed() -> void:
 	gold = float(state["gold"])
 	year = int(state["year"])
 	month = int(state["month"])
+	_months_total = int(state.get("months_total", (year - 1) * 12 + month))
 	buildings.clear()
 	trees.clear()
+	serviced.clear()
+	walkers.clear()
 	for entry: Dictionary in state["buildings"]:
 		buildings[Vector2i(int(entry["x"]), int(entry["y"]))] = String(entry["type"])
 	for entry: Dictionary in state.get("trees", []):
@@ -323,6 +458,9 @@ func _on_load_pressed() -> void:
 
 func _on_reset_pressed() -> void:
 	buildings.clear()
+	walkers.clear()
+	serviced.clear()
+	_months_total = 0
 	population = 0
 	grain = 100.0
 	gold = 100.0
@@ -358,6 +496,8 @@ func _build_hud() -> void:
 	box.add_child(_grain_label)
 	_gold_label = Label.new()
 	box.add_child(_gold_label)
+	_walker_label = Label.new()
+	box.add_child(_walker_label)
 	_tool_label = Label.new()
 	box.add_child(_tool_label)
 
@@ -423,6 +563,7 @@ func _update_hud() -> void:
 	_pop_label.text = "人口：%d / %d" % [population, pop_capacity]
 	_grain_label.text = "粮食：%d" % int(grain)
 	_gold_label.text = "金钱：%d" % int(gold)
+	_walker_label.text = "行人：%d" % walkers.size()
 
 
 func _show_message(text: String) -> void:
@@ -441,26 +582,45 @@ func _draw() -> void:
 	draw_rect(Rect2(top_left, world_size), Color(0.13, 0.12, 0.10))
 	draw_set_transform_matrix(Transform2D())
 
-	# 地面层：草地 + 农田（贴地的建筑类型随地面一起画）
+	# 地面层：草地 + 贴地建筑（道路、农田）
 	for cell: Vector2i in grass:
 		var ground := GROUND_0 if grass[cell] == 0 else GROUND_1
 		draw_texture(ground, MAP_ORIGIN + Vector2(cell) * CELL)
 	for cell: Vector2i in buildings:
-		if buildings[cell] == "farm":
-			var farm_def: Dictionary = building_defs["farm"]
-			draw_texture(farm_def["tex"], MAP_ORIGIN + Vector2(cell) * CELL)
+		var btype: String = buildings[cell]
+		if bool(building_defs[btype].get("flat", false)):
+			draw_texture(building_defs[btype]["tex"], MAP_ORIGIN + Vector2(cell) * CELL)
 
-	# 立牌层：民居/松树，按深度排序实现遮挡
+	# 道路连接线（相邻道路之间画上车辙连线）
+	for cell: Vector2i in buildings:
+		if buildings[cell] != "road":
+			continue
+		for dir: Vector2i in [Vector2i(1, 0), Vector2i(0, 1)]:
+			if _is_road(cell + dir):
+				var p1 := MAP_ORIGIN + Vector2(cell) * CELL + Vector2(CELL, CELL) / 2
+				var p2 := MAP_ORIGIN + Vector2(cell + dir) * CELL + Vector2(CELL, CELL) / 2
+				draw_line(p1, p2, Color(0.42, 0.36, 0.28), 3.0)
+
+	# 立牌层：民居/松树/行人，按深度排序实现遮挡
 	var dv: Vector2 = DEPTH_VECS[_rot]
 	var items := []
 	for cell: Vector2i in trees:
 		items.append([Vector2(cell).dot(dv), cell, "tree"])
 	for cell: Vector2i in buildings:
-		if buildings[cell] != "farm":
+		if not bool(building_defs[buildings[cell]].get("flat", false)):
 			items.append([Vector2(cell).dot(dv), cell, buildings[cell]])
+	for w: Dictionary in walkers:
+		items.append([w.pos.dot(dv), null, "walker", w])
 	items.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
 
 	for item: Array in items:
+		if item[2] == "walker":
+			var w: Dictionary = item[3]
+			var wbase: Vector2 = _proj() * (MAP_ORIGIN + w.pos * CELL + Vector2(CELL, CELL) / 2)
+			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, wbase))
+			draw_texture(VILLAGER_TEX, Vector2(-6, -18))
+			draw_set_transform_matrix(Transform2D())
+			continue
 		var cell: Vector2i = item[1]
 		# 格子底边中心的世界坐标作为立牌落脚点
 		var base: Vector2 = _proj() * (MAP_ORIGIN + Vector2(cell) * CELL + Vector2(CELL / 2, CELL))
@@ -481,7 +641,7 @@ func _draw() -> void:
 		draw_polyline(corners + [corners[0]], Color(0.4, 0.9, 0.4) if valid else Color(0.9, 0.3, 0.3), 1.5)
 		if valid:
 			var ghost_def: Dictionary = building_defs[selected_tool]
-			if selected_tool == "farm":
+			if bool(ghost_def.get("flat", false)):
 				draw_texture(ghost_def["tex"], p0, Color(1, 1, 1, 0.6))
 			else:
 				var gbase: Vector2 = _proj() * (p0 + Vector2(CELL / 2, CELL))

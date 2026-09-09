@@ -4,13 +4,22 @@
 		"cost_gold": 20,
 		"pop_capacity": 8,
 		"texture": "house.png",
-		"desc": "提供人口上限"
+		"flat": false,
+		"desc": "提供人口上限，需邻接道路、有行人往来才会发展"
 	},
 	"farm": {
 		"name": "农田",
 		"cost_gold": 10,
 		"grain_per_month": 4,
 		"texture": "farm.png",
-		"desc": "每月产出粮食"
+		"flat": true,
+		"desc": "每月产出粮食，需邻接道路才运送"
+	},
+	"road": {
+		"name": "道路",
+		"cost_gold": 2,
+		"texture": "road.png",
+		"flat": true,
+		"desc": "连接建筑，供行人通行"
 	}
 }
