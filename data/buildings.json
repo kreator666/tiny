@@ -1,0 +1,16 @@
+{
+	"house": {
+		"name": "民居",
+		"cost_gold": 20,
+		"pop_capacity": 8,
+		"color": "#8b5a2b",
+		"desc": "提供人口上限"
+	},
+	"farm": {
+		"name": "农田",
+		"cost_gold": 10,
+		"grain_per_month": 4,
+		"color": "#3d8b37",
+		"desc": "每月产出粮食"
+	}
+}
