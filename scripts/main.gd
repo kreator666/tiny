@@ -1,29 +1,29 @@
 extends Node2D
 ## 游戏主逻辑：网格地图、建筑放置、月份推演、HUD。
 ## 时间流速：每 2 秒 = 1 个月。
-## 视觉：Kenney Tiny Town / Tiny Farm（CC0 协议，见 assets/KENNEY_LICENSE.txt）
+## 视觉：程序化生成工笔画风素材（tools/gen_gongbi_assets.py，宣纸底/宋式建筑）。
+## 相机：滚轮缩放（以鼠标为中心）、中键拖拽平移、方向键/WASD 平移、右键取消建造
 
-const GRID_W := 20
-const GRID_H := 20
+const GRID_W := 40
+const GRID_H := 30
 const CELL := 32
 const MAP_ORIGIN := Vector2(16, 16)
 const MONTH_SECONDS := 2.0
 
-# 素材表参数：16px  tiles，每行 12 个
-const SHEET_COLS := 12
-const SRC := 16
+const ZOOM_MIN := 0.4
+const ZOOM_MAX := 3.0
+const ZOOM_STEP := 1.15
+const PAN_SPEED := 600.0  # 像素/秒（按缩放比例换算）
 
-const TOWN_SHEET: Texture2D = preload("res://assets/tiles/town_packed.png")
-const FARM_SHEET: Texture2D = preload("res://assets/tiles/farm_packed.png")
-
-const GRASS_TILES := [0, 1]  # 草地块（town 表 row0 col0-1）
-const TREE_TILE := 6  # 小松树（town 表 row0 col6）
+const GROUND_0: Texture2D = preload("res://assets/gongbi/ground_0.png")
+const GROUND_1: Texture2D = preload("res://assets/gongbi/ground_1.png")
+const TREE_TEX: Texture2D = preload("res://assets/gongbi/tree.png")
 
 # ---------- 状态 ----------
 
-var building_defs: Dictionary = {}
+var building_defs: Dictionary = {}  # 加载时缓存贴图到每个 def 的 "tex" 字段
 var buildings: Dictionary = {}  # Vector2i 坐标 -> 建筑类型(String)
-var grass: Dictionary = {}  # Vector2i 坐标 -> 草地块变体索引
+var grass: Dictionary = {}  # Vector2i 坐标 -> 草地块变体索引(0/1)
 var trees: Dictionary = {}  # Vector2i 坐标 -> true
 
 var population := 0
@@ -38,6 +38,9 @@ var hover_cell := Vector2i(-1, -1)
 var message := ""
 
 var _elapsed := 0.0
+var _dragging := false  # 中键拖拽平移中
+
+var _camera: Camera2D
 
 # HUD 节点引用（在 _build_hud 中创建）
 var _pop_label: Label
@@ -50,6 +53,8 @@ var _tool_buttons := {}
 
 
 func _ready() -> void:
+	_camera = Camera2D.new()
+	add_child(_camera)
 	_load_building_defs()
 	_generate_terrain()
 	_build_hud()
@@ -63,6 +68,9 @@ func _load_building_defs() -> void:
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
 	assert(typeof(parsed) == TYPE_DICTIONARY, "buildings.json 格式错误")
 	building_defs = parsed
+	for type: String in building_defs:
+		var def: Dictionary = building_defs[type]
+		def["tex"] = load("res://assets/gongbi/" + def["texture"])
 
 
 func _generate_terrain() -> void:
@@ -72,7 +80,7 @@ func _generate_terrain() -> void:
 	for x in GRID_W:
 		for y in GRID_H:
 			var cell := Vector2i(x, y)
-			grass[cell] = GRASS_TILES[rng.randi_range(0, GRASS_TILES.size() - 1)]
+			grass[cell] = rng.randi_range(0, 1)
 			if rng.randf() < 0.05:
 				trees[cell] = true
 
@@ -82,11 +90,38 @@ func _generate_terrain() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		_on_tool_selected("")
+	elif event is InputEventMouseButton:
+		match event.button_index:
+			MOUSE_BUTTON_WHEEL_UP:
+				if event.pressed:
+					_zoom_at_mouse(1.0 / ZOOM_STEP)
+			MOUSE_BUTTON_WHEEL_DOWN:
+				if event.pressed:
+					_zoom_at_mouse(ZOOM_STEP)
+			MOUSE_BUTTON_MIDDLE:
+				_dragging = event.pressed
+			MOUSE_BUTTON_RIGHT:
+				if event.pressed:
+					_on_tool_selected("")
+			MOUSE_BUTTON_LEFT:
+				if event.pressed:
+					_try_place(_screen_to_cell(get_global_mouse_position()))
 	elif event is InputEventMouseMotion:
+		if _dragging:
+			_camera.position -= event.relative / _camera.zoom.x
 		hover_cell = _screen_to_cell(get_global_mouse_position())
 		queue_redraw()
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		_try_place(_screen_to_cell(get_global_mouse_position()))
+
+
+func _zoom_at_mouse(factor: float) -> void:
+	var new_zoom := (_camera.zoom * factor).clampf(ZOOM_MIN, ZOOM_MAX)
+	if new_zoom.is_equal_approx(_camera.zoom):
+		return
+	var mouse := get_global_mouse_position()
+	# 保持鼠标下的世界点不动
+	_camera.position += (mouse - _camera.position) * (1.0 - _camera.zoom.x / new_zoom.x)
+	_camera.zoom = new_zoom
+	queue_redraw()
 
 
 func _screen_to_cell(pos: Vector2) -> Vector2i:
@@ -129,6 +164,20 @@ func _process(delta: float) -> void:
 	if _elapsed >= MONTH_SECONDS:
 		_elapsed = 0.0
 		_advance_month()
+
+	# 方向键 / WASD 平移
+	var dir := Vector2.ZERO
+	if Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A):
+		dir.x -= 1
+	if Input.is_key_pressed(KEY_RIGHT) or Input.is_key_pressed(KEY_D):
+		dir.x += 1
+	if Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W):
+		dir.y -= 1
+	if Input.is_key_pressed(KEY_DOWN) or Input.is_key_pressed(KEY_S):
+		dir.y += 1
+	if dir != Vector2.ZERO:
+		_camera.position += dir.normalized() * PAN_SPEED * delta / _camera.zoom.x
+		queue_redraw()
 
 
 func _advance_month() -> void:
@@ -305,7 +354,7 @@ func _on_tool_selected(type: String) -> void:
 		_tool_buttons[tool].set_pressed_no_signal(tool == type)
 	var building_name: String = building_defs[type]["name"] if not type.is_empty() else "无"
 	if _tool_label:
-		_tool_label.text = "当前工具：%s（Esc 取消）" % building_name
+		_tool_label.text = "当前工具：%s（右键/Esc 取消）" % building_name
 	_show_message("已选择：%s" % building_name)
 
 
@@ -324,43 +373,31 @@ func _show_message(text: String) -> void:
 
 # ---------- 绘制 ----------
 
-func _sheet_texture(sheet: String) -> Texture2D:
-	return TOWN_SHEET if sheet == "town" else FARM_SHEET
-
-
-func _draw_sheet_tile(tex: Texture2D, idx: int, dest: Vector2, alpha: float = 1.0) -> void:
-	var src := Rect2((idx % SHEET_COLS) * SRC, (idx / SHEET_COLS) * SRC, SRC, SRC)
-	draw_texture_rect_region(tex, Rect2(dest, Vector2(SRC, SRC)), src, Color(1, 1, 1, alpha))
-
-
-func _draw_building(type: String, origin: Vector2, alpha: float = 1.0) -> void:
-	var def: Dictionary = building_defs[type]
-	var tex := _sheet_texture(def["sheet"])
-	var quad: Array = def["quad"]
-	for i in 4:
-		_draw_sheet_tile(tex, int(quad[i]), origin + Vector2(i % 2, i / 2) * SRC, alpha)
-
-
 func _draw() -> void:
-	# 地图外底色
-	draw_rect(Rect2(Vector2.ZERO, Vector2(980, 700)), Color(0.09, 0.10, 0.12))
+	# 地图外底色：覆盖整个可视区域（随相机/窗口变化）
+	var world_size := get_viewport_rect().size / _camera.zoom
+	var top_left := _camera.get_screen_center_position() - world_size / 2
+	draw_rect(Rect2(top_left, world_size), Color(0.13, 0.12, 0.10))
 
 	# 草地地形
 	for cell: Vector2i in grass:
-		_draw_sheet_tile(TOWN_SHEET, grass[cell], MAP_ORIGIN + Vector2(cell) * CELL)
+		var ground := GROUND_0 if grass[cell] == 0 else GROUND_1
+		draw_texture(ground, MAP_ORIGIN + Vector2(cell) * CELL)
 
-	# 树木装饰
+	# 松树（比格子高，向上伸出；透明底贴图）
 	for cell: Vector2i in trees:
-		_draw_sheet_tile(TOWN_SHEET, TREE_TILE, MAP_ORIGIN + Vector2(cell) * CELL + Vector2(0, 8))
+		draw_texture(TREE_TEX, MAP_ORIGIN + Vector2(cell) * CELL + Vector2(-4, -24))
 
 	# 建筑
 	for cell: Vector2i in buildings:
-		_draw_building(buildings[cell], MAP_ORIGIN + Vector2(cell) * CELL)
+		var def: Dictionary = building_defs[buildings[cell]]
+		draw_texture(def["tex"], MAP_ORIGIN + Vector2(cell) * CELL)
 
 	# 悬停预览：半透明影子 + 可建造性着色
 	if _in_bounds(hover_cell) and not selected_tool.is_empty():
 		var valid := not buildings.has(hover_cell) and not trees.has(hover_cell)
 		var origin := MAP_ORIGIN + Vector2(hover_cell) * CELL
-		_draw_building(selected_tool, origin, 0.6)
+		var ghost: Texture2D = building_defs[selected_tool]["tex"]
+		draw_texture(ghost, origin, Color(1, 1, 1, 0.6))
 		var tint := Color(0.4, 0.9, 0.4, 0.25) if valid else Color(0.9, 0.3, 0.3, 0.35)
 		draw_rect(Rect2(origin, Vector2(CELL, CELL)), tint, true)

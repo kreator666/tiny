@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://sli6p37bvrye"
-path="res://.godot/imported/farm_packed.png-3c4ea6dc4479ee3e7bc782a847c25347.ctex"
+uid="uid://bx1gq22h1dj5x"
+path="res://.godot/imported/ground_1.png-3ec29b93a190e51944ae0874765a8c56.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets/tiles/farm_packed.png"
-dest_files=["res://.godot/imported/farm_packed.png-3c4ea6dc4479ee3e7bc782a847c25347.ctex"]
+source_file="res://assets/gongbi/ground_1.png"
+dest_files=["res://.godot/imported/ground_1.png-3ec29b93a190e51944ae0874765a8c56.ctex"]
 
 [params]
 
