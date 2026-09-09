@@ -267,12 +267,19 @@ func _unhandled_input(event: InputEvent) -> void:
 					_on_tool_selected("")
 			MOUSE_BUTTON_LEFT:
 				if event.pressed:
-					_try_place(_screen_to_cell(get_global_mouse_position()))
+					_try_place(_screen_to_cell(_mouse_grid_pos()))
 	elif event is InputEventMouseMotion:
 		if _dragging:
 			_cam_pos -= event.relative / _zoom.x
-		hover_cell = _screen_to_cell(get_global_mouse_position())
+		hover_cell = _screen_to_cell(_mouse_grid_pos())
 		queue_redraw()
+
+
+func _mouse_grid_pos() -> Vector2:
+	## 屏幕鼠标 -> 格子像素坐标。
+	## 实测：根节点 get_global_mouse_position 只应用视图变换（V⁻¹），
+	## 不包含本节点的投影矩阵，因此这里手动补一次 P⁻¹。
+	return _proj().affine_inverse() * get_global_mouse_position()
 
 
 func _screen_to_cell(pos: Vector2) -> Vector2i:
@@ -327,6 +334,12 @@ func _process(delta: float) -> void:
 	if not walkers.is_empty():
 		_update_walkers(delta)
 		_walker_label.text = "行人：%d" % walkers.size()
+		queue_redraw()
+
+	# 悬停格每帧刷新（平移/旋转视角后鼠标未动，悬停位置也会变）
+	var new_hover := _screen_to_cell(_mouse_grid_pos())
+	if new_hover != hover_cell:
+		hover_cell = new_hover
 		queue_redraw()
 
 	# 方向键 / WASD 平移
