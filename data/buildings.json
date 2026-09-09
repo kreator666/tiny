@@ -5,7 +5,7 @@
 		"pop_capacity": 8,
 		"texture": "house.png",
 		"flat": false,
-		"desc": "提供人口上限，需邻接道路、有行人往来才会发展"
+		"desc": "住 8 人。每月消耗食品，需邻路、有行人往来才发展"
 	},
 	"farm": {
 		"name": "农田",
@@ -13,7 +13,27 @@
 		"grain_per_month": 4,
 		"texture": "farm.png",
 		"flat": true,
-		"desc": "每月产出粮食，需邻接道路才运送"
+		"desc": "每月产出 4 粮食（需磨坊、市集加工后百姓才能吃）"
+	},
+	"mill": {
+		"name": "磨坊",
+		"cost_gold": 40,
+		"convert_from": "grain",
+		"convert_to": "flour",
+		"convert_rate": 6,
+		"texture": "mill.png",
+		"flat": false,
+		"desc": "每月把至多 6 粮磨成面粉，需邻路"
+	},
+	"market": {
+		"name": "市集",
+		"cost_gold": 30,
+		"convert_from": "flour",
+		"convert_to": "food",
+		"convert_rate": 6,
+		"texture": "market.png",
+		"flat": false,
+		"desc": "每月把至多 6 面粉做成食品，需邻路，派挑夫服务民居"
 	},
 	"road": {
 		"name": "道路",

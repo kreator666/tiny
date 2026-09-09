@@ -2,9 +2,9 @@ extends Node2D
 ## 游戏主逻辑：网格地图、建筑放置、月份推演、HUD。
 ## 渲染：45° 斜投影（菱形地砖）+ 建筑立牌（billboard）+ 深度排序遮挡。
 ## 视角：滚轮缩放（以鼠标为中心）、中键拖拽平移、WASD/方向键平移、Q/E 旋转 90°。
-## 核心玩法：法老王式道路+行人系统——
-##   建筑需邻接道路激活；民居派出行人沿路随机行走，
-##   行人经过的道路格会“服务”相邻民居，无服务的民居停止发展。
+## 核心玩法：法老王式道路+行人系统 + 生产链——
+##   农田 -> 粮食 -> 磨坊 -> 面粉 -> 市集 -> 食品 -> 民居。
+##   建筑需邻接道路激活；行人（居民/挑夫）沿路随机行走并服务相邻民居。
 ## 时间流速：每 2 秒 = 1 个月。
 ## 素材：程序化生成工笔画风（tools/gen_gongbi_assets.py）。
 
@@ -31,8 +31,8 @@ const DIRS := [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]
 # 行人参数
 const WALK_SPEED := 2.5  # 格/秒
 const WALKER_STEPS := 20  # 每次出行走的步数
-const WALKER_MAX := 60
-const SPAWN_INTERVAL := 3.0  # 每个民居的派人间隔（秒）
+const WALKER_MAX := 80
+const SPAWN_INTERVAL := 3.0  # 每个来源建筑的派人间隔（秒）
 
 const GROUND_0: Texture2D = preload("res://assets/gongbi/ground_0.png")
 const GROUND_1: Texture2D = preload("res://assets/gongbi/ground_1.png")
@@ -46,12 +46,14 @@ var buildings: Dictionary = {}  # Vector2i 坐标 -> 建筑类型(String)
 var grass: Dictionary = {}  # Vector2i 坐标 -> 草地块变体索引(0/1)
 var trees: Dictionary = {}  # Vector2i 坐标 -> true
 
-var walkers: Array = []  # 每个行人: {pos, cur, nxt, t, left, prev}
+var walkers: Array = []  # 每个行人: {pos, cur, nxt, t, left, prev, kind} kind: 0居民 1挑夫
 var serviced: Dictionary = {}  # 民居格 -> 最近一次被行人服务的月份序号
 
 var population := 0
 var pop_capacity := 0  # 由民居数量决定，每次变化时重算
 var grain := 100.0
+var flour := 0.0
+var food := 20.0  # 开局存粮让百姓能撑到产业链建成
 var gold := 100.0
 var year := 1
 var month := 1
@@ -73,6 +75,8 @@ var _zoom := Vector2.ONE
 # HUD 节点引用（在 _build_hud 中创建）
 var _pop_label: Label
 var _grain_label: Label
+var _flour_label: Label
+var _food_label: Label
 var _gold_label: Label
 var _date_label: Label
 var _tool_label: Label
@@ -181,11 +185,15 @@ func _has_adjacent_road(cell: Vector2i) -> bool:
 
 func _spawn_walkers() -> void:
 	for cell: Vector2i in buildings:
-		if buildings[cell] != "house":
+		var btype: String = buildings[cell]
+		# 民居派居民(kind 0)，市集派挑夫(kind 1)
+		var kind := -1
+		if btype == "house":
+			kind = 0
+		elif btype == "market":
+			kind = 1
+		if kind < 0 or walkers.size() >= WALKER_MAX:
 			continue
-		# 只要有邻路就派行人（房子即代表有住户），保证冷启动
-		if walkers.size() >= WALKER_MAX:
-			return
 		if not _has_adjacent_road(cell):
 			continue
 		var roads := _road_neighbors(cell)
@@ -200,6 +208,7 @@ func _spawn_walkers() -> void:
 			"prev": cell,
 			"t": 0.0,
 			"left": WALKER_STEPS,
+			"kind": kind,
 		})
 		_service_around(start)
 
@@ -361,12 +370,23 @@ func _process(delta: float) -> void:
 func _advance_month() -> void:
 	_months_total += 1
 
-	# 农田产出（需邻接道路，粮食才运得出去）
-	var farm_count := 0
+	# 生产链：农田产粮 -> 磨坊磨面 -> 市集做食品
+	# （数据驱动：buildings.json 里的 grain_per_month / convert_from/to/rate 字段）
+	var stock := {"grain": grain, "flour": flour, "food": food}
 	for cell: Vector2i in buildings:
-		if buildings[cell] == "farm" and _has_adjacent_road(cell):
-			farm_count += 1
-	grain += farm_count * int(building_defs["farm"]["grain_per_month"])
+		var btype: String = buildings[cell]
+		var def: Dictionary = building_defs.get(btype, {})
+		if not _has_adjacent_road(cell):
+			continue
+		if def.has("grain_per_month"):
+			stock["grain"] = float(stock["grain"]) + float(def["grain_per_month"])
+		if def.has("convert_from"):
+			var use: float = minf(float(def["convert_rate"]), float(stock[def["convert_from"]]))
+			stock[def["convert_from"]] = float(stock[def["convert_from"]]) - use
+			stock[def["convert_to"]] = float(stock[def["convert_to"]]) + use
+	grain = stock["grain"]
+	flour = stock["flour"]
+	food = stock["food"]
 
 	# 民居有效容量 = 容量 x 近期有行人往来的民居比例
 	var house_cells: Array[Vector2i] = []
@@ -384,18 +404,21 @@ func _advance_month() -> void:
 		if ratio < 0.5 and population > 0:
 			_show_message("部分民居缺乏行人往来，发展停滞")
 
-	# 人口消耗粮食
+	# 人口消耗食品
 	var consumption: int = int(ceil(population * 0.5))
-	if grain >= consumption:
-		grain -= consumption
+	if food >= consumption:
+		food -= consumption
 		# 有饭吃：人口向有效容量缓慢增长
 		if population < eff_capacity:
 			population = mini(eff_capacity, population + maxi(1, eff_capacity / 20))
 	elif population > 0:
-		grain = 0.0
+		food = 0.0
 		# 饥荒：人口衰减
 		population = maxi(0, population - maxi(1, population / 10))
-		_show_message("饥荒！人口下降")
+		if grain > 0 or flour > 0:
+			_show_message("有粮无食！需要磨坊和市集把粮食端上桌")
+		else:
+			_show_message("饥荒！人口下降")
 
 	# 无人行走的民居会逐渐流失人口
 	if not house_cells.is_empty() and eff_capacity < pop_capacity and population > eff_capacity:
@@ -434,6 +457,8 @@ func _on_save_pressed() -> void:
 	var state := {
 		"population": population,
 		"grain": grain,
+		"flour": flour,
+		"food": food,
 		"gold": gold,
 		"year": year,
 		"month": month,
@@ -452,6 +477,8 @@ func _on_load_pressed() -> void:
 		return
 	population = int(state["population"])
 	grain = float(state["grain"])
+	flour = float(state.get("flour", 0.0))
+	food = float(state.get("food", 20.0))
 	gold = float(state["gold"])
 	year = int(state["year"])
 	month = int(state["month"])
@@ -477,6 +504,8 @@ func _on_reset_pressed() -> void:
 	_months_total = 0
 	population = 0
 	grain = 100.0
+	flour = 0.0
+	food = 20.0
 	gold = 100.0
 	year = 1
 	month = 1
@@ -508,6 +537,10 @@ func _build_hud() -> void:
 	box.add_child(_pop_label)
 	_grain_label = Label.new()
 	box.add_child(_grain_label)
+	_flour_label = Label.new()
+	box.add_child(_flour_label)
+	_food_label = Label.new()
+	box.add_child(_food_label)
 	_gold_label = Label.new()
 	box.add_child(_gold_label)
 	_walker_label = Label.new()
@@ -576,6 +609,8 @@ func _update_hud() -> void:
 	_date_label.text = "第 %d 年 %d 月" % [year, month]
 	_pop_label.text = "人口：%d / %d" % [population, pop_capacity]
 	_grain_label.text = "粮食：%d" % int(grain)
+	_flour_label.text = "面粉：%d" % int(flour)
+	_food_label.text = "食品：%d" % int(food)
 	_gold_label.text = "金钱：%d" % int(gold)
 	_walker_label.text = "行人：%d" % walkers.size()
 
@@ -615,7 +650,7 @@ func _draw() -> void:
 				var p2 := MAP_ORIGIN + Vector2(cell + dir) * CELL + Vector2(CELL, CELL) / 2
 				draw_line(p1, p2, Color(0.42, 0.36, 0.28), 3.0)
 
-	# 立牌层：民居/松树/行人，按深度排序实现遮挡
+	# 立牌层：民居/磨坊/市集/松树/行人，按深度排序实现遮挡
 	var dv: Vector2 = DEPTH_VECS[_rot]
 	var items := []
 	for cell: Vector2i in trees:
@@ -632,7 +667,9 @@ func _draw() -> void:
 			var w: Dictionary = item[3]
 			var wbase: Vector2 = _proj() * (MAP_ORIGIN + w.pos * CELL + Vector2(CELL, CELL) / 2)
 			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, wbase))
-			draw_texture(VILLAGER_TEX, Vector2(-6, -18))
+			# 挑夫(kind 1)罩暖色 tint，与居民区分
+			var tint := Color(0.95, 0.78, 0.6) if int(w.get("kind", 0)) == 1 else Color.WHITE
+			draw_texture(VILLAGER_TEX, Vector2(-6, -18), tint)
 			draw_set_transform_matrix(Transform2D())
 			continue
 		var cell: Vector2i = item[1]
@@ -650,8 +687,8 @@ func _draw() -> void:
 		var valid := not buildings.has(hover_cell) and not trees.has(hover_cell)
 		var p0 := MAP_ORIGIN + Vector2(hover_cell) * CELL
 		var corners := [p0, p0 + Vector2(CELL, 0), p0 + Vector2(CELL, CELL), p0 + Vector2(0, CELL)]
-		var tint := Color(0.4, 0.9, 0.4, 0.25) if valid else Color(0.9, 0.3, 0.3, 0.35)
-		draw_colored_polygon(corners, tint)
+		var tint2 := Color(0.4, 0.9, 0.4, 0.25) if valid else Color(0.9, 0.3, 0.3, 0.35)
+		draw_colored_polygon(corners, tint2)
 		draw_polyline(corners + [corners[0]], Color(0.4, 0.9, 0.4) if valid else Color(0.9, 0.3, 0.3), 1.5)
 		if valid:
 			var ghost_def: Dictionary = building_defs[selected_tool]

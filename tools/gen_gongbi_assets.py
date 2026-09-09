@@ -203,4 +203,56 @@ d.line([(4, 18), (4, 19)], fill=INK)
 d.line([(8, 18), (8, 19)], fill=INK)
 save(v, "villager.png")
 
+
+# ---------- 磨坊（64 画布 -> 32：土墙茅顶 + 大水车） ----------
+S = 64
+m = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+d = ImageDraw.Draw(m)
+shadow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+sd = ImageDraw.Draw(shadow)
+sd.ellipse([6, 48, 58, 58], fill=(60, 55, 45, 70))
+m = Image.alpha_composite(m, shadow.filter(ImageFilter.GaussianBlur(3)))
+d = ImageDraw.Draw(m)
+d.rectangle([12, 30, 50, 50], fill=(238, 230, 210), outline=INK)      # 土墙
+d.polygon([(4, 30), (20, 15), (42, 15), (58, 30)], fill=(136, 112, 82))  # 茅顶
+d.line([(4, 30), (20, 15), (42, 15), (58, 30), (4, 30)], fill=INK)
+d.line([(20, 15), (42, 15)], fill=INK, width=2)                       # 脊
+d.rectangle([28, 38, 36, 50], fill=WOOD, outline=INK)                 # 门
+# 水车
+cx, cy, r = 49, 42, 11
+d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(150, 120, 90), outline=INK, width=2)
+d.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=INK)
+for a in range(0, 360, 45):
+    x2 = cx + int(r * 0.85 * math.cos(math.radians(a)))
+    y2 = cy + int(r * 0.85 * math.sin(math.radians(a)))
+    d.line([(cx, cy), (x2, y2)], fill=INK, width=1)
+save(m.resize((32, 32), Image.LANCZOS), "mill.png")
+
+
+# ---------- 市集（64 画布 -> 32：摊位 + 条纹布棚 + 酒旗） ----------
+k = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+d = ImageDraw.Draw(k)
+shadow = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+sd = ImageDraw.Draw(shadow)
+sd.ellipse([6, 48, 58, 58], fill=(60, 55, 45, 70))
+k = Image.alpha_composite(k, shadow.filter(ImageFilter.GaussianBlur(3)))
+d = ImageDraw.Draw(k)
+# 立柱
+for px in (14, 46):
+    d.line([(px, 24), (px, 44)], fill=INK, width=3)
+# 布棚（条纹）
+d.polygon([(8, 24), (52, 24), (48, 16), (12, 16)], fill=(238, 232, 220))
+for sx in range(10, 52, 7):
+    d.line([(sx, 16), (sx - 2, 24)], fill=(146, 94, 62), width=3)
+d.line([(8, 24), (52, 24)], fill=INK, width=1)
+# 柜台
+d.rectangle([12, 40, 50, 47], fill=(168, 128, 88), outline=INK)
+d.line([(12, 43), (50, 43)], fill=INK + (120,))
+# 酒旗
+d.line([(56, 46), (56, 12)], fill=INK, width=2)
+d.polygon([(56, 12), (63, 14), (63, 30), (56, 28)], fill=(172, 62, 52))
+d.line([(57, 18), (62, 19)], fill=(238, 232, 220))
+d.line([(57, 23), (62, 24)], fill=(238, 232, 220))
+save(k.resize((32, 32), Image.LANCZOS), "market.png")
+
 print("全部完成 ->", os.path.abspath(OUT))
