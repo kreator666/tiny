@@ -1,6 +1,7 @@
 extends Node2D
 ## 游戏主逻辑：网格地图、建筑放置、月份推演、HUD。
 ## 时间流速：每 2 秒 = 1 个月。
+## 视觉：Kenney Tiny Town / Tiny Farm（CC0 协议，见 assets/KENNEY_LICENSE.txt）
 
 const GRID_W := 20
 const GRID_H := 20
@@ -8,10 +9,22 @@ const CELL := 32
 const MAP_ORIGIN := Vector2(16, 16)
 const MONTH_SECONDS := 2.0
 
+# 素材表参数：16px  tiles，每行 12 个
+const SHEET_COLS := 12
+const SRC := 16
+
+const TOWN_SHEET: Texture2D = preload("res://assets/tiles/town_packed.png")
+const FARM_SHEET: Texture2D = preload("res://assets/tiles/farm_packed.png")
+
+const GRASS_TILES := [0, 1]  # 草地块（town 表 row0 col0-1）
+const TREE_TILE := 6  # 小松树（town 表 row0 col6）
+
 # ---------- 状态 ----------
 
 var building_defs: Dictionary = {}
 var buildings: Dictionary = {}  # Vector2i 坐标 -> 建筑类型(String)
+var grass: Dictionary = {}  # Vector2i 坐标 -> 草地块变体索引
+var trees: Dictionary = {}  # Vector2i 坐标 -> true
 
 var population := 0
 var pop_capacity := 0  # 由民居数量决定，每次变化时重算
@@ -38,6 +51,7 @@ var _tool_buttons := {}
 
 func _ready() -> void:
 	_load_building_defs()
+	_generate_terrain()
 	_build_hud()
 	_refresh_capacity()
 	_update_hud()
@@ -49,6 +63,18 @@ func _load_building_defs() -> void:
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
 	assert(typeof(parsed) == TYPE_DICTIONARY, "buildings.json 格式错误")
 	building_defs = parsed
+
+
+func _generate_terrain() -> void:
+	# 固定种子，保证每次新档地形一致（可换成 randi 每次随机）
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 20240101
+	for x in GRID_W:
+		for y in GRID_H:
+			var cell := Vector2i(x, y)
+			grass[cell] = GRASS_TILES[rng.randi_range(0, GRASS_TILES.size() - 1)]
+			if rng.randf() < 0.05:
+				trees[cell] = true
 
 
 # ---------- 输入 ----------
@@ -71,8 +97,14 @@ func _screen_to_cell(pos: Vector2) -> Vector2i:
 func _try_place(cell: Vector2i) -> void:
 	if selected_tool.is_empty():
 		return
-	if not _in_bounds(cell) or buildings.has(cell):
+	if not _in_bounds(cell):
 		_show_message("这里不能建造")
+		return
+	if trees.has(cell):
+		_show_message("这里有树木，暂不可建造")
+		return
+	if buildings.has(cell):
+		_show_message("这里已有建筑")
 		return
 	var def: Dictionary = building_defs[selected_tool]
 	if gold < int(def["cost_gold"]):
@@ -147,6 +179,9 @@ func _on_save_pressed() -> void:
 	var list := []
 	for cell: Vector2i in buildings:
 		list.append({"x": cell.x, "y": cell.y, "type": buildings[cell]})
+	var tree_list := []
+	for cell: Vector2i in trees:
+		tree_list.append({"x": cell.x, "y": cell.y})
 	var state := {
 		"population": population,
 		"grain": grain,
@@ -154,6 +189,7 @@ func _on_save_pressed() -> void:
 		"year": year,
 		"month": month,
 		"buildings": list,
+		"trees": tree_list,
 	}
 	var err := SaveManager.save_game(state)
 	_show_message("保存成功" if err == OK else "保存失败")
@@ -170,8 +206,11 @@ func _on_load_pressed() -> void:
 	year = int(state["year"])
 	month = int(state["month"])
 	buildings.clear()
+	trees.clear()
 	for entry: Dictionary in state["buildings"]:
 		buildings[Vector2i(int(entry["x"]), int(entry["y"]))] = String(entry["type"])
+	for entry: Dictionary in state.get("trees", []):
+		trees[Vector2i(int(entry["x"]), int(entry["y"]))] = true
 	_refresh_capacity()
 	_update_hud()
 	queue_redraw()
@@ -195,6 +234,7 @@ func _on_reset_pressed() -> void:
 
 func _build_hud() -> void:
 	var layer := CanvasLayer.new()
+	layer.name = "CanvasLayer"
 	add_child(layer)
 
 	var panel := PanelContainer.new()
@@ -284,24 +324,43 @@ func _show_message(text: String) -> void:
 
 # ---------- 绘制 ----------
 
+func _sheet_texture(sheet: String) -> Texture2D:
+	return TOWN_SHEET if sheet == "town" else FARM_SHEET
+
+
+func _draw_sheet_tile(tex: Texture2D, idx: int, dest: Vector2, alpha: float = 1.0) -> void:
+	var src := Rect2((idx % SHEET_COLS) * SRC, (idx / SHEET_COLS) * SRC, SRC, SRC)
+	draw_texture_rect_region(tex, Rect2(dest, Vector2(SRC, SRC)), src, Color(1, 1, 1, alpha))
+
+
+func _draw_building(type: String, origin: Vector2, alpha: float = 1.0) -> void:
+	var def: Dictionary = building_defs[type]
+	var tex := _sheet_texture(def["sheet"])
+	var quad: Array = def["quad"]
+	for i in 4:
+		_draw_sheet_tile(tex, int(quad[i]), origin + Vector2(i % 2, i / 2) * SRC, alpha)
+
+
 func _draw() -> void:
-	# 地图底色与网格线
-	draw_rect(Rect2(MAP_ORIGIN, Vector2(GRID_W, GRID_H) * CELL), Color(0.13, 0.14, 0.16))
-	for x in GRID_W + 1:
-		var px := MAP_ORIGIN.x + x * CELL
-		draw_line(Vector2(px, MAP_ORIGIN.y), Vector2(px, MAP_ORIGIN.y + GRID_H * CELL), Color(0.3, 0.3, 0.3))
-	for y in GRID_H + 1:
-		var py := MAP_ORIGIN.y + y * CELL
-		draw_line(Vector2(MAP_ORIGIN.x, py), Vector2(MAP_ORIGIN.x + GRID_W * CELL, py), Color(0.3, 0.3, 0.3))
+	# 地图外底色
+	draw_rect(Rect2(Vector2.ZERO, Vector2(980, 700)), Color(0.09, 0.10, 0.12))
+
+	# 草地地形
+	for cell: Vector2i in grass:
+		_draw_sheet_tile(TOWN_SHEET, grass[cell], MAP_ORIGIN + Vector2(cell) * CELL)
+
+	# 树木装饰
+	for cell: Vector2i in trees:
+		_draw_sheet_tile(TOWN_SHEET, TREE_TILE, MAP_ORIGIN + Vector2(cell) * CELL + Vector2(0, 8))
 
 	# 建筑
 	for cell: Vector2i in buildings:
-		var def: Dictionary = building_defs[buildings[cell]]
-		var rect := Rect2(MAP_ORIGIN + Vector2(cell) * CELL + Vector2(2, 2), Vector2(CELL - 4, CELL - 4))
-		draw_rect(rect, Color(def["color"]))
+		_draw_building(buildings[cell], MAP_ORIGIN + Vector2(cell) * CELL)
 
-	# 悬停高亮
+	# 悬停预览：半透明影子 + 可建造性着色
 	if _in_bounds(hover_cell) and not selected_tool.is_empty():
-		var valid := not buildings.has(hover_cell)
-		var hover := Rect2(MAP_ORIGIN + Vector2(hover_cell) * CELL, Vector2(CELL, CELL))
-		draw_rect(hover, Color(0.4, 0.9, 0.4, 0.35) if valid else Color(0.9, 0.3, 0.3, 0.35), true)
+		var valid := not buildings.has(hover_cell) and not trees.has(hover_cell)
+		var origin := MAP_ORIGIN + Vector2(hover_cell) * CELL
+		_draw_building(selected_tool, origin, 0.6)
+		var tint := Color(0.4, 0.9, 0.4, 0.25) if valid else Color(0.9, 0.3, 0.3, 0.35)
+		draw_rect(Rect2(origin, Vector2(CELL, CELL)), tint, true)
