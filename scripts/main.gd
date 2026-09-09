@@ -181,8 +181,9 @@ func _has_adjacent_road(cell: Vector2i) -> bool:
 
 func _spawn_walkers() -> void:
 	for cell: Vector2i in buildings:
-		if buildings[cell] != "house" or population <= 0:
+		if buildings[cell] != "house":
 			continue
+		# 只要有邻路就派行人（房子即代表有住户），保证冷启动
 		if walkers.size() >= WALKER_MAX:
 			return
 		if not _has_adjacent_road(cell):
