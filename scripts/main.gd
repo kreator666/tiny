@@ -31,6 +31,7 @@ var _pop_label: Label
 var _grain_label: Label
 var _gold_label: Label
 var _date_label: Label
+var _tool_label: Label
 var _message_label: Label
 var _tool_buttons := {}
 
@@ -53,7 +54,9 @@ func _load_building_defs() -> void:
 # ---------- 输入 ----------
 
 func _unhandled_input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		_on_tool_selected("")
+	elif event is InputEventMouseMotion:
 		hover_cell = _screen_to_cell(get_global_mouse_position())
 		queue_redraw()
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
@@ -211,16 +214,19 @@ func _build_hud() -> void:
 	box.add_child(_grain_label)
 	_gold_label = Label.new()
 	box.add_child(_gold_label)
+	_tool_label = Label.new()
+	box.add_child(_tool_label)
 
 	var sep := HSeparator.new()
 	box.add_child(sep)
 
-	# 建造按钮：根据 buildings.json 自动生成
+	# 建造按钮：根据 buildings.json 自动生成（toggle 模式以显示选中状态）
 	for type: String in building_defs:
 		var def: Dictionary = building_defs[type]
 		var btn := Button.new()
 		btn.text = "建造%s（%d 金）" % [def["name"], int(def["cost_gold"])]
 		btn.tooltip_text = def["desc"]
+		btn.toggle_mode = true
 		btn.pressed.connect(_on_tool_selected.bind(type))
 		box.add_child(btn)
 		_tool_buttons[type] = btn
@@ -255,7 +261,12 @@ func _build_hud() -> void:
 
 func _on_tool_selected(type: String) -> void:
 	selected_tool = type
-	_show_message("已选择：%s" % (building_defs[type]["name"] if not type.is_empty() else "无"))
+	for tool: String in _tool_buttons:
+		_tool_buttons[tool].set_pressed_no_signal(tool == type)
+	var building_name: String = building_defs[type]["name"] if not type.is_empty() else "无"
+	if _tool_label:
+		_tool_label.text = "当前工具：%s（Esc 取消）" % building_name
+	_show_message("已选择：%s" % building_name)
 
 
 func _update_hud() -> void:
