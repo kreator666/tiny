@@ -400,6 +400,9 @@ func _try_place(cell: Vector2i) -> void:
 	if not _in_bounds(cell):
 		_show_message("这里不能建造")
 		return
+	if selected_tool == "demolish":
+		_try_demolish(cell)
+		return
 	if trees.has(cell):
 		_show_message("这里有树木，暂不可建造")
 		return
@@ -414,6 +417,31 @@ func _try_place(cell: Vector2i) -> void:
 	buildings[cell] = selected_tool
 	_refresh_capacity()
 	_show_message("建造了 %s" % def["name"])
+	_update_hud()
+	queue_redraw()
+
+
+func _try_demolish(cell: Vector2i) -> void:
+	var anchor := _estate_anchor_at(cell)
+	if anchor != Vector2i(-1, -1):
+		var tier: int = estates[anchor]
+		estates.erase(anchor)
+		serviced.erase(anchor)
+		evolve_prog.erase(anchor)
+		gold += 40 * tier  # 大院按等级退款
+		_show_message("拆除了大院，返还 %d 金" % int(40 * tier))
+	elif buildings.has(cell):
+		var btype: String = buildings[cell]
+		var refund := int(building_defs[btype]["cost_gold"]) / 2
+		buildings.erase(cell)
+		serviced.erase(cell)
+		evolve_prog.erase(cell)
+		gold += refund
+		_show_message("拆除了 %s，返还 %d 金" % [building_defs[btype]["name"], refund])
+	else:
+		_show_message("这里没有可拆除的建筑")
+		return
+	_refresh_capacity()
 	_update_hud()
 	queue_redraw()
 
@@ -619,6 +647,7 @@ func _refresh_capacity() -> void:
 	for tier: int in estates.values():
 		cap += int(ESTATE_CAP[tier])
 	pop_capacity = cap
+	population = mini(population, pop_capacity)  # 拆除后人口不超过容量
 
 
 # ---------- 存档 ----------
@@ -750,6 +779,13 @@ func _build_hud() -> void:
 		box.add_child(btn)
 		_tool_buttons[type] = btn
 
+	var demo_btn := Button.new()
+	demo_btn.text = "拆除（返还半价）"
+	demo_btn.toggle_mode = true
+	demo_btn.pressed.connect(_on_tool_selected.bind("demolish"))
+	box.add_child(demo_btn)
+	_tool_buttons["demolish"] = demo_btn
+
 	var cancel_btn := Button.new()
 	cancel_btn.text = "取消建造"
 	cancel_btn.pressed.connect(_on_tool_selected.bind(""))
@@ -787,7 +823,11 @@ func _on_tool_selected(type: String) -> void:
 	selected_tool = type
 	for tool: String in _tool_buttons:
 		_tool_buttons[tool].set_pressed_no_signal(tool == type)
-	var building_name: String = building_defs[type]["name"] if not type.is_empty() else "无"
+	var building_name := "无"
+	if building_defs.has(type):
+		building_name = building_defs[type]["name"]
+	elif type == "demolish":
+		building_name = "拆除"
 	if _tool_label:
 		_tool_label.text = "当前工具：%s（右键/Esc 取消）" % building_name
 	_show_message("已选择：%s" % building_name)
@@ -874,19 +914,25 @@ func _draw() -> void:
 
 	# 悬停预览
 	if _in_bounds(hover_cell) and not selected_tool.is_empty():
-		var valid := not _is_occupied(hover_cell)
 		var p0 := MAP_ORIGIN + Vector2(hover_cell) * CELL
 		var corners := [p0, p0 + Vector2(CELL, 0), p0 + Vector2(CELL, CELL), p0 + Vector2(0, CELL)]
-		var tint2 := Color(0.4, 0.9, 0.4, 0.25) if valid else Color(0.9, 0.3, 0.3, 0.35)
-		draw_colored_polygon(corners, tint2)
-		draw_polyline(corners + [corners[0]], Color(0.4, 0.9, 0.4) if valid else Color(0.9, 0.3, 0.3), 1.5)
-		if valid:
-			var ghost_def: Dictionary = building_defs[selected_tool]
-			if bool(ghost_def.get("flat", false)):
-				var gtex: Texture2D = road_tex["o"] if selected_tool == "road" else _building_tex(selected_tool)
-				draw_texture(gtex, p0, Color(1, 1, 1, 0.6))
-			else:
-				var gbase: Vector2 = _proj() * (p0 + Vector2(CELL / 2, CELL))
-				draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, gbase))
-				draw_texture(_building_tex(selected_tool), Vector2(-16, -30), Color(1, 1, 1, 0.6))
-				draw_set_transform_matrix(Transform2D())
+		if selected_tool == "demolish":
+			# 拆除模式：有建筑显红框，没有显灰框
+			var can_demo := _estate_anchor_at(hover_cell) != Vector2i(-1, -1) or buildings.has(hover_cell)
+			draw_colored_polygon(corners, Color(0.9, 0.3, 0.3, 0.3) if can_demo else Color(0.5, 0.5, 0.5, 0.2))
+			draw_polyline(corners + [corners[0]], Color(0.9, 0.3, 0.3) if can_demo else Color(0.5, 0.5, 0.5), 1.5)
+		else:
+			var valid := not _is_occupied(hover_cell)
+			var tint2 := Color(0.4, 0.9, 0.4, 0.25) if valid else Color(0.9, 0.3, 0.3, 0.35)
+			draw_colored_polygon(corners, tint2)
+			draw_polyline(corners + [corners[0]], Color(0.4, 0.9, 0.4) if valid else Color(0.9, 0.3, 0.3), 1.5)
+			if valid:
+				var ghost_def: Dictionary = building_defs[selected_tool]
+				if bool(ghost_def.get("flat", false)):
+					var gtex: Texture2D = road_tex["o"] if selected_tool == "road" else _building_tex(selected_tool)
+					draw_texture(gtex, p0, Color(1, 1, 1, 0.6))
+				else:
+					var gbase: Vector2 = _proj() * (p0 + Vector2(CELL / 2, CELL))
+					draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, gbase))
+					draw_texture(_building_tex(selected_tool), Vector2(-16, -30), Color(1, 1, 1, 0.6))
+					draw_set_transform_matrix(Transform2D())

@@ -1,0 +1,5 @@
+{
+	"base_url": "https://aiping.cn/api/v1",
+	"key_file": "tools/aiping_api_key.txt",
+	"model": "Doubao-Seedream-4.0"
+}

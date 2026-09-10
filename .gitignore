@@ -7,3 +7,5 @@ export_presets.cfg
 # 系统文件
 .DS_Store
 Thumbs.db
+tools/302_api_key.txt
+tools/aiping_api_key.txt
