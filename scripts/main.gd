@@ -44,38 +44,27 @@ const ESTATE_CAP := {2: 32, 3: 48}
 const HUT_CAP := 4
 const TILEHOUSE_CAP := 8
 
-const GROUND_0: Texture2D = preload("res://assets/gongbi/ground_0.png")
-const GROUND_1: Texture2D = preload("res://assets/gongbi/ground_1.png")
-const TREE_TEX: Texture2D = preload("res://assets/gongbi/tree.png")
-const VILLAGER_TEX: Texture2D = preload("res://assets/gongbi/villager.png")
+# 贴图运行时加载（素材包切换见 AssetLib；严禁在 _draw 中 load）
+var ground_tex: Array = []  # [ground_0, ground_1]
+var tree_tex: Texture2D
+var villager_tex: Texture2D
+var road_tex: Dictionary = {}  # 方向键 -> Texture2D，键同 ROAD_KEYS
+var estate_tex: Dictionary = {}  # 等级 2/3 -> [d0..d3]
 
-# 方向路块：key = 格子四邻连接（按 n→e→s→w 排序，与 _road_tex 拼键一致）
-const ROAD_TEX: Dictionary = {
-	"o": preload("res://assets/gongbi/road_o.png"),
-	"n": preload("res://assets/gongbi/road_n.png"),
-	"e": preload("res://assets/gongbi/road_e.png"),
-	"s": preload("res://assets/gongbi/road_s.png"),
-	"w": preload("res://assets/gongbi/road_w.png"),
-	"ne": preload("res://assets/gongbi/road_ne.png"),
-	"ns": preload("res://assets/gongbi/road_ns.png"),
-	"nw": preload("res://assets/gongbi/road_nw.png"),
-	"es": preload("res://assets/gongbi/road_es.png"),
-	"ew": preload("res://assets/gongbi/road_ew.png"),
-	"sw": preload("res://assets/gongbi/road_sw.png"),
-	"nes": preload("res://assets/gongbi/road_nes.png"),
-	"new": preload("res://assets/gongbi/road_new.png"),
-	"nsw": preload("res://assets/gongbi/road_nsw.png"),
-	"esw": preload("res://assets/gongbi/road_esw.png"),
-	"nesw": preload("res://assets/gongbi/road_nesw.png"),
-}
+const ROAD_KEYS: Array = ["o", "n", "e", "s", "w", "ne", "ns", "nw", "es", "ew", "sw", "nes", "new", "nsw", "esw", "nesw"]
 
-# 大院贴图：等级 -> 四方向
-const ESTATE_TEX: Dictionary = {
-	2: [preload("res://assets/gongbi/estate2_d0.png"), preload("res://assets/gongbi/estate2_d1.png"),
-		preload("res://assets/gongbi/estate2_d2.png"), preload("res://assets/gongbi/estate2_d3.png")],
-	3: [preload("res://assets/gongbi/estate3_d0.png"), preload("res://assets/gongbi/estate3_d1.png"),
-		preload("res://assets/gongbi/estate3_d2.png"), preload("res://assets/gongbi/estate3_d3.png")],
-}
+
+func _load_pack_textures() -> void:
+	AssetLib.init()
+	ground_tex = [AssetLib.tex("ground_0.png"), AssetLib.tex("ground_1.png")]
+	tree_tex = AssetLib.tex("tree.png")
+	villager_tex = AssetLib.tex("villager.png")
+	for k: String in ROAD_KEYS:
+		road_tex[k] = AssetLib.tex("road_%s.png" % k)
+	estate_tex = {2: [], 3: []}
+	for tier in [2, 3]:
+		for i in 4:
+			estate_tex[tier].append(AssetLib.tex("estate%d_d%d.png" % [tier, i]))
 
 # ---------- 状态 ----------
 
@@ -124,6 +113,7 @@ var _tool_buttons := {}
 
 
 func _ready() -> void:
+	_load_pack_textures()
 	_load_building_defs()
 	_generate_terrain()
 	_build_hud()
@@ -146,9 +136,9 @@ func _load_building_defs() -> void:
 			# 四方向贴图：texture 为基名，加载 _d0.._d3
 			def["tex_dirs"] = []
 			for i in 4:
-				def["tex_dirs"].append(load("res://assets/gongbi/%s_d%d.png" % [def["texture"], i]))
+				def["tex_dirs"].append(AssetLib.tex("%s_d%d.png" % [def["texture"], i]))
 		else:
-			def["tex"] = load("res://assets/gongbi/" + def["texture"])
+			def["tex"] = AssetLib.tex(def["texture"])
 
 
 func _building_tex(btype: String) -> Texture2D:
@@ -175,7 +165,7 @@ func _road_tex(cell: Vector2i) -> Texture2D:
 			key += c
 	if key.is_empty():
 		key = "o"  # 孤立路块
-	return ROAD_TEX[key]
+	return road_tex[key]
 
 
 func _generate_terrain() -> void:
@@ -830,7 +820,7 @@ func _draw() -> void:
 
 	# 地面层：草地 + 贴地建筑
 	for cell: Vector2i in grass:
-		var ground := GROUND_0 if grass[cell] == 0 else GROUND_1
+		var ground: Texture2D = ground_tex[0] if grass[cell] == 0 else ground_tex[1]
 		draw_texture(ground, MAP_ORIGIN + Vector2(cell) * CELL)
 	for cell: Vector2i in buildings:
 		var btype: String = buildings[cell]
@@ -860,7 +850,7 @@ func _draw() -> void:
 			var wbase: Vector2 = _proj() * (MAP_ORIGIN + w.pos * CELL + Vector2(CELL, CELL) / 2)
 			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, wbase))
 			var tint := Color(0.95, 0.78, 0.6) if int(w.get("kind", 0)) == 1 else Color.WHITE
-			draw_texture(VILLAGER_TEX, Vector2(-6, -18), tint)
+			draw_texture(villager_tex, Vector2(-6, -18), tint)
 			draw_set_transform_matrix(Transform2D())
 			continue
 		if item[2] == "estate":
@@ -869,7 +859,7 @@ func _draw() -> void:
 			# 落脚点：2x2 地块的底边中心
 			var ebase: Vector2 = _proj() * (MAP_ORIGIN + Vector2(anchor + Vector2i(1, 2)) * CELL)
 			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, ebase))
-			var etex: Texture2D = ESTATE_TEX[tier][_rot]
+			var etex: Texture2D = estate_tex[tier][_rot]
 			draw_texture(etex, Vector2(-48, -58))
 			draw_set_transform_matrix(Transform2D())
 			continue
@@ -877,7 +867,7 @@ func _draw() -> void:
 		var base: Vector2 = _proj() * (MAP_ORIGIN + Vector2(cell) * CELL + Vector2(CELL / 2, CELL))
 		draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, base))
 		if item[2] == "tree":
-			draw_texture(TREE_TEX, Vector2(-20, -54))
+			draw_texture(tree_tex, Vector2(-20, -54))
 		else:
 			draw_texture(_building_tex(item[2]), Vector2(-16, -30))
 	draw_set_transform_matrix(Transform2D())
@@ -893,7 +883,7 @@ func _draw() -> void:
 		if valid:
 			var ghost_def: Dictionary = building_defs[selected_tool]
 			if bool(ghost_def.get("flat", false)):
-				var gtex: Texture2D = ROAD_TEX["o"] if selected_tool == "road" else _building_tex(selected_tool)
+				var gtex: Texture2D = road_tex["o"] if selected_tool == "road" else _building_tex(selected_tool)
 				draw_texture(gtex, p0, Color(1, 1, 1, 0.6))
 			else:
 				var gbase: Vector2 = _proj() * (p0 + Vector2(CELL / 2, CELL))

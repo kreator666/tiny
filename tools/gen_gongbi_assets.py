@@ -11,7 +11,7 @@ import os
 import random
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
 
-OUT = os.path.join(os.path.dirname(__file__), "..", "assets", "gongbi")
+OUT = os.path.join(os.path.dirname(__file__), "..", "assets", "packs", "gongbi")
 os.makedirs(OUT, exist_ok=True)
 rng = random.Random(20240101)
 
