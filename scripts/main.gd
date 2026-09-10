@@ -465,6 +465,7 @@ func _try_place(cell: Vector2i) -> void:
 	buildings[cell] = selected_tool
 	_refresh_capacity()
 	_show_message("建造了 %s" % def["name"])
+	Sound.play("build")
 	_update_hud()
 	queue_redraw()
 
@@ -489,6 +490,7 @@ func _try_demolish(cell: Vector2i) -> void:
 	else:
 		_show_message("这里没有可拆除的建筑")
 		return
+	Sound.play("demolish")
 	_refresh_capacity()
 	_update_hud()
 	queue_redraw()
@@ -626,9 +628,11 @@ func _resolve_edict() -> void:
 		if kind == "population" or kind == "estate":
 			gold += 100
 		_show_message("诏令达成，朝廷嘉奖！声望 +1")
+		Sound.play("coin")
 	else:
 		prestige -= 1
 		_show_message("诏令未达成，朝廷震怒！声望 -1")
+		Sound.play("warn")
 	edict = {}
 	_issue_edict()
 
@@ -780,6 +784,7 @@ func _evolve_housing(fed: bool) -> void:
 				buildings[cell] = "tilehouse"
 				evolve_prog.erase(cell)
 				_show_message("一间茅屋翻修成了瓦房")
+				Sound.play("evolve")
 		else:
 			evolve_prog[cell] = 0
 
@@ -804,6 +809,7 @@ func _evolve_housing(fed: bool) -> void:
 				estates[anchor] = 3
 				evolve_prog.erase(anchor)
 				_show_message("一座宅院扩建成了豪华大宅！")
+				Sound.play("evolve")
 		else:
 			evolve_prog[anchor] = 0
 
@@ -825,6 +831,7 @@ func _try_merge_estate(cell: Vector2i) -> bool:
 		evolve_prog[anchor] = 0
 		_refresh_capacity()
 		_show_message("几户村民合建了一座宅院！")
+		Sound.play("evolve")
 		return true
 	return false
 
@@ -1056,6 +1063,7 @@ func _build_hud() -> void:
 
 
 func _on_tool_selected(type: String) -> void:
+	Sound.play("click")
 	selected_tool = type
 	for tool: String in _tool_buttons:
 		_tool_buttons[tool].set_pressed_no_signal(tool == type)
