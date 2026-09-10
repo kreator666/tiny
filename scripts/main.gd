@@ -1,3 +1,4 @@
+class_name Main
 extends Node2D
 ## 游戏主逻辑：网格地图、建筑放置、月份推演、HUD。
 ## 渲染：45° 斜投影（菱形地砖）+ 建筑立牌（billboard）+ 深度排序遮挡。
@@ -49,6 +50,11 @@ const TAX_RATE := {"hut": 0.12, "tilehouse": 0.25, 2: 0.4, 3: 0.6}
 const ESTATE_UPKEEP := 5.0
 # 朝廷诏令轮换：缴税/贡粮/人口/宅院
 const EDICT_CYCLE := ["tax", "tribute", "population", "estate"]
+
+# 启动模式（由主菜单 scene 写入静态变量后切场景）：
+#   "new"  全新开局； "auto" 读自动存档； "slot" 读 boot_slot 指定存档位
+static var boot_mode := "new"
+static var boot_slot := 1
 
 # 贴图运行时加载（素材包切换见 AssetLib；严禁在 _draw 中 load）
 var ground_tex: Array = []  # [ground_0, ground_1]
@@ -131,6 +137,8 @@ var _prestige_label: Label
 var _edict_label: Label
 var _econ_label: Label
 var _tool_buttons := {}
+var _active_slot := 1
+var _slot_btn: Button
 
 
 func _ready() -> void:
@@ -143,6 +151,22 @@ func _ready() -> void:
 	_apply_rotation(0)
 	var map_center := MAP_ORIGIN + Vector2(GRID_W, GRID_H) * CELL / 2
 	_cam_pos = _proj() * map_center
+
+	# 按主菜单指定的启动模式读档（测试脚本直接实例化本场景时保持 "new" 不受影响）
+	match boot_mode:
+		"auto":
+			var auto_state := SaveManager.load_auto()
+			if not auto_state.is_empty():
+				_apply_state(auto_state)
+				_show_message("已读取自动存档（第 %d 年 %d 月）" % [year, month])
+		"slot":
+			var slot_state := SaveManager.load_slot(boot_slot)
+			if not slot_state.is_empty():
+				_active_slot = boot_slot
+				_apply_state(slot_state)
+				_show_message("已读取存档槽 %d（第 %d 年 %d 月）" % [boot_slot, year, month])
+	boot_mode = "new"
+	_update_slot_btn()
 
 
 func _load_building_defs() -> void:
@@ -737,6 +761,10 @@ func _advance_month() -> void:
 		month = 1
 		year += 1
 
+	# 每年自动保存一次（静默）
+	if _months_total % 12 == 0:
+		SaveManager.save_auto(_build_state())
+
 	_update_hud()
 	queue_redraw()
 
@@ -831,7 +859,7 @@ func _refresh_capacity() -> void:
 
 # ---------- 存档 ----------
 
-func _on_save_pressed() -> void:
+func _build_state() -> Dictionary:
 	var list := []
 	for cell: Vector2i in buildings:
 		list.append({"x": cell.x, "y": cell.y, "type": buildings[cell]})
@@ -841,7 +869,7 @@ func _on_save_pressed() -> void:
 	var tree_list := []
 	for cell: Vector2i in trees:
 		tree_list.append({"x": cell.x, "y": cell.y})
-	var state := {
+	return {
 		"population": population,
 		"grain": grain,
 		"flour": flour,
@@ -857,15 +885,9 @@ func _on_save_pressed() -> void:
 		"estates": estate_list,
 		"trees": tree_list,
 	}
-	var err := SaveManager.save_game(state)
-	_show_message("保存成功" if err == OK else "保存失败")
 
 
-func _on_load_pressed() -> void:
-	var state := SaveManager.load_game()
-	if state.is_empty():
-		_show_message("没有找到存档")
-		return
+func _apply_state(state: Dictionary) -> void:
 	population = int(state["population"])
 	grain = float(state["grain"])
 	flour = float(state.get("flour", 0.0))
@@ -894,36 +916,43 @@ func _on_load_pressed() -> void:
 		trees[Vector2i(int(entry["x"]), int(entry["y"]))] = true
 	_refresh_capacity()
 	_update_hud()
+	_update_slot_btn()
 	queue_redraw()
-	_show_message("读取成功")
 
 
-func _on_reset_pressed() -> void:
-	buildings.clear()
-	estates.clear()
-	walkers.clear()
-	serviced.clear()
-	watered.clear()
-	evolve_prog.clear()
-	burning.clear()
-	locust_months_left = 0
-	_months_total = 0
-	prestige = 0
-	edict = {}
-	_edict_counter = 0
-	last_tax_income = 0.0
-	last_upkeep = 0.0
-	population = 0
-	grain = 100.0
-	flour = 0.0
-	food = 20.0
-	gold = 10000.0
-	year = 1
-	month = 1
-	_refresh_capacity()
-	_update_hud()
-	queue_redraw()
-	_show_message("已开新档")
+func _on_save_pressed() -> void:
+	var err := SaveManager.save_slot(_active_slot, _build_state())
+	_update_slot_btn()
+	_show_message("已保存到存档槽 %d" % _active_slot if err == OK else "保存失败")
+
+
+func _on_load_pressed() -> void:
+	var state := SaveManager.load_slot(_active_slot)
+	if state.is_empty():
+		_show_message("存档槽 %d 是空的" % _active_slot)
+		return
+	_apply_state(state)
+	_show_message("已读取存档槽 %d" % _active_slot)
+
+
+func _on_slot_cycle_pressed() -> void:
+	_active_slot = _active_slot % SaveManager.SLOT_COUNT + 1  # 1 -> 2 -> 3 -> 1
+	_update_slot_btn()
+
+
+func _update_slot_btn() -> void:
+	if _slot_btn == null:
+		return
+	var info := SaveManager.slot_info(_active_slot)
+	if info.is_empty():
+		_slot_btn.text = "存档槽 %d（空，点击切换）" % _active_slot
+	else:
+		_slot_btn.text = "存档槽 %d｜第%d年%d月 人口%d（点击切换）" % [
+			_active_slot, int(info.get("year", 1)), int(info.get("month", 1)), int(info.get("population", 0))]
+
+
+func _on_menu_pressed() -> void:
+	get_tree().change_scene_to_file("res://scenes/menu.tscn")
 
 
 # ---------- HUD ----------
@@ -997,20 +1026,24 @@ func _build_hud() -> void:
 	var sep2 := HSeparator.new()
 	box.add_child(sep2)
 
+	_slot_btn = Button.new()
+	_slot_btn.pressed.connect(_on_slot_cycle_pressed)
+	box.add_child(_slot_btn)
+
 	var save_btn := Button.new()
-	save_btn.text = "保存"
+	save_btn.text = "保存到当前槽"
 	save_btn.pressed.connect(_on_save_pressed)
 	box.add_child(save_btn)
 
 	var load_btn := Button.new()
-	load_btn.text = "读取"
+	load_btn.text = "读取当前槽"
 	load_btn.pressed.connect(_on_load_pressed)
 	box.add_child(load_btn)
 
-	var reset_btn := Button.new()
-	reset_btn.text = "开新档"
-	reset_btn.pressed.connect(_on_reset_pressed)
-	box.add_child(reset_btn)
+	var menu_btn := Button.new()
+	menu_btn.text = "返回主菜单"
+	menu_btn.pressed.connect(_on_menu_pressed)
+	box.add_child(menu_btn)
 
 	_message_label = Label.new()
 	_message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
