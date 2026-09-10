@@ -44,6 +44,12 @@ const ESTATE_CAP := {2: 32, 3: 48}
 const HUT_CAP := 4
 const TILEHOUSE_CAP := 8
 
+# 财政：按居所等级定的人均月税（金/人/月）与大院维护
+const TAX_RATE := {"hut": 0.12, "tilehouse": 0.25, 2: 0.4, 3: 0.6}
+const ESTATE_UPKEEP := 5.0
+# 朝廷诏令轮换：缴税/贡粮/人口/宅院
+const EDICT_CYCLE := ["tax", "tribute", "population", "estate"]
+
 # 贴图运行时加载（素材包切换见 AssetLib；严禁在 _draw 中 load）
 var ground_tex: Array = []  # [ground_0, ground_1]
 var tree_tex: Texture2D
@@ -74,8 +80,9 @@ var estates: Dictionary = {}  # 2x2 大院锚点 Vector2i -> 等级(2 宅院 / 3
 var grass: Dictionary = {}
 var trees: Dictionary = {}
 
-var walkers: Array = []  # {pos, cur, nxt, t, left, prev, kind} kind: 0居民 1挑夫
+var walkers: Array = []  # {pos, cur, nxt, t, left, prev, kind} kind: 0居民 1挑夫 2挑水夫
 var serviced: Dictionary = {}  # 居所(民居格或大院锚点) -> 最近服务月份序号
+var watered: Dictionary = {}  # 居所 -> 最近送水月份序号
 var evolve_prog: Dictionary = {}  # 居所 -> 连续达标月数
 
 var population := 0
@@ -87,6 +94,17 @@ var gold := 10000.0
 var year := 1
 var month := 1
 var _months_total := 0
+
+# 朝廷与财政
+var prestige := 0  # 声望：诏令达成 +1，失败 -1
+var edict: Dictionary = {}  # 当前诏令 {kind, target, deadline(总月数)}
+var _edict_counter := 0
+var last_tax_income := 0.0
+var last_upkeep := 0.0
+
+# 灾害与事件
+var burning: Dictionary = {}  # 建筑格 -> 剩余燃烧月数
+var locust_months_left := 0  # 蝗灾：农田减产剩余月数
 
 var selected_tool := ""
 var hover_cell := Vector2i(-1, -1)
@@ -109,6 +127,9 @@ var _date_label: Label
 var _tool_label: Label
 var _walker_label: Label
 var _message_label: Label
+var _prestige_label: Label
+var _edict_label: Label
+var _econ_label: Label
 var _tool_buttons := {}
 
 
@@ -269,6 +290,8 @@ func _spawn_walkers() -> void:
 			kind = 0
 		elif btype == "market":
 			kind = 1
+		elif btype == "well":
+			kind = 2
 		if kind < 0 or walkers.size() >= WALKER_MAX:
 			continue
 		if not _has_adjacent_road(cell):
@@ -307,7 +330,7 @@ func _spawn_walker_from(start: Vector2i, home: Variant, kind: int) -> void:
 		"left": WALKER_STEPS,
 		"kind": kind,
 	})
-	_service_around(start)
+	_service_around(start, kind == 2)
 
 
 func _choose_next_road(cur: Vector2i, prev: Variant) -> Vector2i:
@@ -322,15 +345,16 @@ func _choose_next_road(cur: Vector2i, prev: Variant) -> Vector2i:
 	return options[randi() % options.size()]
 
 
-func _service_around(road_cell: Vector2i) -> void:
+func _service_around(road_cell: Vector2i, is_water: bool = false) -> void:
+	var target := watered if is_water else serviced
 	for dir: Vector2i in DIRS:
 		var nb := road_cell + dir
 		if buildings.get(nb, "") == "hut" or buildings.get(nb, "") == "tilehouse":
-			serviced[nb] = _months_total
+			target[nb] = _months_total
 		else:
 			var anchor := _estate_anchor_at(nb)
 			if anchor != Vector2i(-1, -1):
-				serviced[anchor] = _months_total
+				target[anchor] = _months_total
 
 
 func _update_walkers(delta: float) -> void:
@@ -341,7 +365,7 @@ func _update_walkers(delta: float) -> void:
 			w.cur = w.nxt
 			w.t = 0.0
 			w.left -= 1
-			_service_around(w.cur)
+			_service_around(w.cur, int(w.get("kind", 0)) == 2)
 			var next: Vector2i = _choose_next_road(w.cur, w.prev)
 			w.prev = w.cur
 			if next == Vector2i(-1, -1) or w.left <= 0:
@@ -492,6 +516,152 @@ func _recently_serviced(key: Vector2i) -> bool:
 	return _months_total - int(serviced.get(key, -999)) <= 1
 
 
+func _recently_watered(key: Vector2i) -> bool:
+	return _months_total - int(watered.get(key, -999)) <= 1
+
+
+# 财政：分级人头税 - 建筑维护（含大院）。返回本月净收入。
+func _economy_month() -> float:
+	var cap_total := 0
+	var tax_sum := 0.0
+	for cell: Vector2i in buildings:
+		var t: String = buildings[cell]
+		if t == "hut" or t == "tilehouse":
+			var c: int = HUT_CAP if t == "hut" else TILEHOUSE_CAP
+			cap_total += c
+			tax_sum += c * float(TAX_RATE[t])
+	for tier: int in estates.values():
+		cap_total += int(ESTATE_CAP[tier])
+		tax_sum += int(ESTATE_CAP[tier]) * float(TAX_RATE[tier])
+	var tax := tax_sum / cap_total * float(population) if cap_total > 0 else 0.0
+	var upkeep := 0.0
+	for b: String in buildings.values():
+		upkeep += float(building_defs[b].get("upkeep", 0.0))
+	upkeep += estates.size() * ESTATE_UPKEEP
+	last_tax_income = tax
+	last_upkeep = upkeep
+	return tax - upkeep
+
+
+# ---------- 朝廷诏令 ----------
+
+func _edict_desc() -> String:
+	if edict.is_empty():
+		return "暂无诏令"
+	var kind: String = edict["kind"]
+	var target: int = int(edict["target"])
+	var left: int = maxi(0, int(edict["deadline"]) - _months_total)
+	match kind:
+		"tax":
+			return "诏令：%d 月内缴纳赋税 %d 金（现有 %d）" % [left, target, int(gold)]
+		"tribute":
+			return "诏令：%d 月内缴纳贡粮 %d 食品（现有 %d）" % [left, target, int(food)]
+		"population":
+			return "诏令：%d 月内人口达 %d（现有 %d）" % [left, target, population]
+		"estate":
+			return "诏令：%d 月内宅院达 %d 座（现有 %d）" % [left, target, estates.size()]
+	return ""
+
+
+func _issue_edict() -> void:
+	_edict_counter += 1
+	var kind: String = EDICT_CYCLE[_edict_counter % EDICT_CYCLE.size()]
+	var target := 0
+	match kind:
+		"tax":
+			target = int(100 + population * 1.5)
+		"tribute":
+			target = int(50 + population * 1.0)
+		"population":
+			target = population + maxi(5, population / 4)
+		"estate":
+			target = estates.size() + 1
+	edict = {"kind": kind, "target": target, "deadline": _months_total + 12}
+	_show_message("朝廷下达新诏令：" + _edict_desc())
+
+
+func _resolve_edict() -> void:
+	var kind: String = edict["kind"]
+	var target: int = int(edict["target"])
+	var ok := false
+	match kind:
+		"tax":
+			ok = gold >= target
+			if ok:
+				gold -= target
+		"tribute":
+			ok = food >= target
+			if ok:
+				food -= target
+		"population":
+			ok = population >= target
+		"estate":
+			ok = estates.size() >= target
+	if ok:
+		prestige += 1
+		if kind == "population" or kind == "estate":
+			gold += 100
+		_show_message("诏令达成，朝廷嘉奖！声望 +1")
+	else:
+		prestige -= 1
+		_show_message("诏令未达成，朝廷震怒！声望 -1")
+	edict = {}
+	_issue_edict()
+
+
+# ---------- 灾害与事件 ----------
+
+func _events_month() -> void:
+	# 火灾倒计时
+	for cell: Vector2i in burning.keys():
+		burning[cell] = int(burning[cell]) - 1
+		if int(burning[cell]) <= 0:
+			burning.erase(cell)
+			var btype: String = buildings.get(cell, "")
+			if not btype.is_empty():
+				buildings.erase(cell)
+				serviced.erase(cell)
+				watered.erase(cell)
+				evolve_prog.erase(cell)
+				_show_message("一场火灾烧毁了%s！" % building_defs[btype]["name"])
+	_refresh_capacity()
+	if locust_months_left > 0:
+		locust_months_left -= 1
+	# 新事件概率：月均 4%
+	if randf() < 0.04:
+		_trigger_event()
+
+
+func _trigger_event() -> void:
+	var roll := randi() % 100
+	if roll < 30:
+		var candidates: Array = []
+		for cell: Vector2i in buildings:
+			if buildings[cell] != "road" and not burning.has(cell):
+				candidates.append(cell)
+		if candidates.is_empty():
+			return
+		var cell: Vector2i = candidates[randi() % candidates.size()]
+		burning[cell] = 2
+		_show_message("%s起火了！两月后将被烧毁" % building_defs[buildings[cell]]["name"])
+	elif roll < 50:
+		if population > 0:
+			var loss: int = maxi(1, population / 10)
+			population -= loss
+			_show_message("瘟疫流行，%d 人病亡" % loss)
+	elif roll < 75:
+		var farms := 0
+		for b: String in buildings.values():
+			if b == "farm":
+				farms += 1
+		var bonus := farms * 20
+		grain += bonus
+		_show_message("风调雨顺，农田丰收！粮食 +%d" % bonus)
+	else:
+		locust_months_left = 6
+		_show_message("蝗灾来袭！六个月内农田减产一半")
+
+
 func _advance_month() -> void:
 	_months_total += 1
 
@@ -503,7 +673,8 @@ func _advance_month() -> void:
 		if not _has_adjacent_road(cell):
 			continue
 		if def.has("grain_per_month"):
-			stock["grain"] = float(stock["grain"]) + float(def["grain_per_month"])
+			var mult := 0.5 if locust_months_left > 0 else 1.0
+			stock["grain"] = float(stock["grain"]) + float(def["grain_per_month"]) * mult
 		if def.has("convert_from"):
 			var use: float = minf(float(def["convert_rate"]), float(stock[def["convert_from"]]))
 			stock[def["convert_from"]] = float(stock[def["convert_from"]]) - use
@@ -551,7 +722,15 @@ func _advance_month() -> void:
 	# 住房演进（需吃饱 + 有服务）
 	_evolve_housing(fed)
 
-	gold += population * 0.2
+	# 财政与朝廷
+	gold += _economy_month()
+	if edict.is_empty():
+		_issue_edict()
+	elif _months_total >= int(edict["deadline"]):
+		_resolve_edict()
+
+	# 灾害与事件
+	_events_month()
 
 	month += 1
 	if month > 12:
@@ -563,11 +742,11 @@ func _advance_month() -> void:
 
 
 func _evolve_housing(fed: bool) -> void:
-	# 茅屋 -> 瓦房
+	# 茅屋 -> 瓦房（需有水喝）
 	for cell: Vector2i in buildings.keys():
 		if buildings.get(cell, "") != "hut":
 			continue
-		if fed and _recently_serviced(cell):
+		if fed and _recently_serviced(cell) and _recently_watered(cell):
 			evolve_prog[cell] = int(evolve_prog.get(cell, 0)) + 1
 			if evolve_prog[cell] >= EVOLVE_HUT:
 				buildings[cell] = "tilehouse"
@@ -671,6 +850,9 @@ func _on_save_pressed() -> void:
 		"year": year,
 		"month": month,
 		"months_total": _months_total,
+		"prestige": prestige,
+		"edict": edict,
+		"edict_counter": _edict_counter,
 		"buildings": list,
 		"estates": estate_list,
 		"trees": tree_list,
@@ -692,12 +874,18 @@ func _on_load_pressed() -> void:
 	year = int(state["year"])
 	month = int(state["month"])
 	_months_total = int(state.get("months_total", (year - 1) * 12 + month))
+	prestige = int(state.get("prestige", 0))
+	edict = state.get("edict", {})
+	_edict_counter = int(state.get("edict_counter", 0))
 	buildings.clear()
 	estates.clear()
 	trees.clear()
 	serviced.clear()
+	watered.clear()
 	walkers.clear()
 	evolve_prog.clear()
+	burning.clear()
+	locust_months_left = 0
 	for entry: Dictionary in state["buildings"]:
 		buildings[Vector2i(int(entry["x"]), int(entry["y"]))] = String(entry["type"])
 	for entry: Dictionary in state.get("estates", []):
@@ -715,8 +903,16 @@ func _on_reset_pressed() -> void:
 	estates.clear()
 	walkers.clear()
 	serviced.clear()
+	watered.clear()
 	evolve_prog.clear()
+	burning.clear()
+	locust_months_left = 0
 	_months_total = 0
+	prestige = 0
+	edict = {}
+	_edict_counter = 0
+	last_tax_income = 0.0
+	last_upkeep = 0.0
 	population = 0
 	grain = 100.0
 	flour = 0.0
@@ -758,6 +954,13 @@ func _build_hud() -> void:
 	box.add_child(_food_label)
 	_gold_label = Label.new()
 	box.add_child(_gold_label)
+	_econ_label = Label.new()
+	box.add_child(_econ_label)
+	_prestige_label = Label.new()
+	box.add_child(_prestige_label)
+	_edict_label = Label.new()
+	_edict_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	box.add_child(_edict_label)
 	_walker_label = Label.new()
 	box.add_child(_walker_label)
 	_tool_label = Label.new()
@@ -840,6 +1043,9 @@ func _update_hud() -> void:
 	_flour_label.text = "面粉：%d" % int(flour)
 	_food_label.text = "食品：%d" % int(food)
 	_gold_label.text = "金钱：%d" % int(gold)
+	_econ_label.text = "月税 %.1f − 维护 %.1f" % [last_tax_income, last_upkeep]
+	_prestige_label.text = "朝廷声望：%d" % prestige
+	_edict_label.text = _edict_desc()
 	_walker_label.text = "行人：%d" % walkers.size()
 
 
@@ -865,10 +1071,11 @@ func _draw() -> void:
 	for cell: Vector2i in buildings:
 		var btype: String = buildings[cell]
 		if bool(building_defs[btype].get("flat", false)):
+			var ftint := Color(1, 0.45, 0.35) if burning.has(cell) else Color.WHITE
 			if btype == "road":
 				draw_texture(_road_tex(cell), MAP_ORIGIN + Vector2(cell) * CELL)
 			else:
-				draw_texture(_building_tex(btype), MAP_ORIGIN + Vector2(cell) * CELL)
+				draw_texture(_building_tex(btype), MAP_ORIGIN + Vector2(cell) * CELL, ftint)
 
 	# 立牌层（含大院），按深度排序
 	var dv: Vector2 = DEPTH_VECS[_rot]
@@ -889,7 +1096,12 @@ func _draw() -> void:
 			var w: Dictionary = item[3]
 			var wbase: Vector2 = _proj() * (MAP_ORIGIN + w.pos * CELL + Vector2(CELL, CELL) / 2)
 			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, wbase))
-			var tint := Color(0.95, 0.78, 0.6) if int(w.get("kind", 0)) == 1 else Color.WHITE
+			var wkind := int(w.get("kind", 0))
+			var tint := Color.WHITE
+			if wkind == 1:
+				tint = Color(0.95, 0.78, 0.6)  # 挑夫：暖色
+			elif wkind == 2:
+				tint = Color(0.62, 0.8, 0.98)  # 挑水夫：蓝色
 			draw_texture(villager_tex, Vector2(-6, -18), tint)
 			draw_set_transform_matrix(Transform2D())
 			continue
@@ -909,7 +1121,8 @@ func _draw() -> void:
 		if item[2] == "tree":
 			draw_texture(tree_tex, Vector2(-20, -54))
 		else:
-			draw_texture(_building_tex(item[2]), Vector2(-16, -30))
+			var btint := Color(1, 0.45, 0.35) if burning.has(cell) else Color.WHITE
+			draw_texture(_building_tex(item[2]), Vector2(-16, -30), btint)
 	draw_set_transform_matrix(Transform2D())
 
 	# 悬停预览

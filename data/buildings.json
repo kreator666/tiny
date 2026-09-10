@@ -6,7 +6,8 @@
 		"texture": "hut",
 		"dir": true,
 		"flat": false,
-		"desc": "最简陋的住所。服务好、有饭吃会自动翻修升级"
+		"upkeep": 0,
+		"desc": "最简陋的住所。有水喝、服务好、有饭吃会自动翻修升级"
 	},
 	"tilehouse": {
 		"name": "瓦房",
@@ -16,6 +17,7 @@
 		"dir": true,
 		"flat": false,
 		"buildable": false,
+		"upkeep": 0.5,
 		"desc": "由茅屋升级而来；四户连片可合建宅院"
 	},
 	"farm": {
@@ -24,6 +26,7 @@
 		"grain_per_month": 4,
 		"texture": "farm.png",
 		"flat": true,
+		"upkeep": 1,
 		"desc": "每月产出 4 粮食（需磨坊、市集加工后百姓才能吃）"
 	},
 	"mill": {
@@ -35,6 +38,7 @@
 		"texture": "mill",
 		"dir": true,
 		"flat": false,
+		"upkeep": 3,
 		"desc": "每月把至多 6 粮磨成面粉，需邻路"
 	},
 	"market": {
@@ -46,13 +50,23 @@
 		"texture": "market",
 		"dir": true,
 		"flat": false,
+		"upkeep": 2,
 		"desc": "每月把至多 6 面粉做成食品，需邻路，派挑夫服务民居"
+	},
+	"well": {
+		"name": "水井",
+		"cost_gold": 40,
+		"texture": "well.png",
+		"flat": false,
+		"upkeep": 1,
+		"desc": "派挑水夫沿街送水，民居有水喝才能翻修升级"
 	},
 	"road": {
 		"name": "道路",
 		"cost_gold": 2,
 		"texture": "road.png",
 		"flat": true,
+		"upkeep": 0.05,
 		"desc": "连接建筑，供行人通行"
 	}
 }
