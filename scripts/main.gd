@@ -139,6 +139,7 @@ var _econ_label: Label
 var _tool_buttons := {}
 var _active_slot := 1
 var _slot_btn: Button
+var _minimap: Minimap
 
 
 func _ready() -> void:
@@ -968,6 +969,12 @@ func _build_hud() -> void:
 	var layer := CanvasLayer.new()
 	layer.name = "CanvasLayer"
 	add_child(layer)
+
+	_minimap = Minimap.new()
+	_minimap.main = self
+	_minimap.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_minimap.position = Vector2(12, -132)
+	layer.add_child(_minimap)
 
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
