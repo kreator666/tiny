@@ -155,6 +155,7 @@ const ESTATE_GROUND_OFF := {
 
 # 建造菜单分类（法老王式）：一级为分类方块 + 道路/拆除，二级为分类内建筑
 const BUILD_MENU := {
+	"住宅": ["hut"],
 	"农业": ["farm", "mill"],
 	"商业": ["market"],
 	"市政": ["well", "clinic", "repair"],
@@ -1270,12 +1271,17 @@ func _apply_state(state: Dictionary) -> void:
 	for entry: Dictionary in state.get("conds", []):
 		building_cond[Vector2i(int(entry["x"]), int(entry["y"]))] = int(entry["cond"])
 	for entry: Dictionary in state["buildings"]:
-		buildings[Vector2i(int(entry["x"]), int(entry["y"]))] = String(entry["type"])
+		var btype := String(entry["type"])
+		if not building_defs.has(btype):
+			push_warning("存档含未知建筑类型 %s，已跳过" % btype)
+			continue
+		buildings[Vector2i(int(entry["x"]), int(entry["y"]))] = btype
 	for entry: Dictionary in state.get("estates", []):
 		estates[Vector2i(int(entry["x"]), int(entry["y"]))] = int(entry["tier"])
 	for entry: Dictionary in state.get("trees", []):
 		trees[Vector2i(int(entry["x"]), int(entry["y"]))] = true
 	_refresh_capacity()
+	_assign_jobs()  # 读档后 employed 已清空，必须重新分配岗位
 	_update_hud()
 	_update_slot_btn()
 	queue_redraw()
@@ -1319,12 +1325,76 @@ func _on_menu_pressed() -> void:
 	get_tree().change_scene_to_file("res://scenes/menu.tscn")
 
 
-# ---------- HUD ----------
+	# ---------- HUD ----------
 
 func _build_hud() -> void:
 	var layer := CanvasLayer.new()
 	layer.name = "CanvasLayer"
 	add_child(layer)
+
+	# 顶部导航条：标题 | 存档位 | 存档 | 系统 | …… | 帮助
+	var top := PanelContainer.new()
+	top.set_anchors_preset(Control.PRESET_TOP_WIDE)
+	top.custom_minimum_size = Vector2(0, 40)
+	top.add_theme_constant_override("margin_left", 8)
+	top.add_theme_constant_override("margin_right", 8)
+	top.add_theme_constant_override("margin_top", 4)
+	top.add_theme_constant_override("margin_bottom", 4)
+	layer.add_child(top)
+
+	var top_row := HBoxContainer.new()
+	top_row.add_theme_constant_override("separation", 10)
+	top.add_child(top_row)
+
+	var title := Label.new()
+	title.text = "新宋 · 治所"
+	title.add_theme_font_size_override("font_size", 18)
+	top_row.add_child(title)
+
+	_slot_btn = Button.new()
+	_slot_btn.pressed.connect(_on_slot_cycle_pressed)
+	top_row.add_child(_slot_btn)
+
+	var file_menu := MenuButton.new()
+	file_menu.text = "存档"
+	var file_popup := file_menu.get_popup()
+	file_popup.add_item("保存到当前槽", 0)
+	file_popup.add_item("读取当前槽", 1)
+	file_popup.id_pressed.connect(func(id: int) -> void:
+		if id == 0:
+			_on_save_pressed()
+		else:
+			_on_load_pressed())
+	top_row.add_child(file_menu)
+
+	var sys_menu := MenuButton.new()
+	sys_menu.text = "系统"
+	var sys_popup := sys_menu.get_popup()
+	var diff_keys := ["easy", "normal", "hard"]
+	for i: int in diff_keys.size():
+		sys_popup.add_radio_check_item("难度：" + str(DIFFICULTY[diff_keys[i]]["name"]), 10 + i)
+		sys_popup.set_item_checked(sys_popup.get_item_count() - 1, diff_keys[i] == difficulty)
+	sys_popup.add_separator()
+	sys_popup.add_item("返回主菜单", 20)
+	sys_popup.id_pressed.connect(func(id: int) -> void:
+		if id == 20:
+			_on_menu_pressed()
+		elif id >= 10:
+			difficulty = diff_keys[id - 10]
+			for j: int in diff_keys.size():
+				sys_popup.set_item_checked(j, diff_keys[j] == difficulty)
+			_update_hud()
+			_show_message("难度已切换为：%s" % _diff_name()))
+	top_row.add_child(sys_menu)
+
+	var top_spacer := Control.new()
+	top_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	top_row.add_child(top_spacer)
+
+	var help_label := Label.new()
+	help_label.text = "滚轮缩放 | 中键/WASD平移 | Q/E旋转"
+	help_label.modulate = Color(0.75, 0.75, 0.75)
+	top_row.add_child(help_label)
 
 	_minimap = Minimap.new()
 	_minimap.main = self
@@ -1332,53 +1402,82 @@ func _build_hud() -> void:
 	_minimap.position = Vector2(12, -132)
 	layer.add_child(_minimap)
 
-	var panel := PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_CENTER_RIGHT)
-	panel.position = Vector2(-284, -320)
-	panel.custom_minimum_size = Vector2(268, 640)
-	layer.add_child(panel)
+	# 右侧三卡片导航栏（靠右，从上到下）：状态 -> 朝廷诏令 -> 建造
+	var side := VBoxContainer.new()
+	side.anchor_left = 1.0
+	side.anchor_top = 0.0
+	side.anchor_right = 1.0
+	side.anchor_bottom = 1.0
+	side.offset_left = -320
+	side.offset_top = 48  # 顶部导航条高 40，留 8 间隙
+	side.offset_right = -12
+	side.offset_bottom = -12
+	side.add_theme_constant_override("separation", 8)
+	layer.add_child(side)
 
+	# 卡片 1：状态
+	var status_card := PanelContainer.new()
+	side.add_child(status_card)
+	var sbox := VBoxContainer.new()
+	status_card.add_child(sbox)
+	var status_title := Label.new()
+	status_title.text = "状态"
+	status_title.add_theme_font_size_override("font_size", 16)
+	sbox.add_child(status_title)
+	_date_label = Label.new()
+	sbox.add_child(_date_label)
+	_pop_label = Label.new()
+	sbox.add_child(_pop_label)
+	_grain_label = Label.new()
+	sbox.add_child(_grain_label)
+	_flour_label = Label.new()
+	sbox.add_child(_flour_label)
+	_food_label = Label.new()
+	sbox.add_child(_food_label)
+	_wood_label = Label.new()
+	sbox.add_child(_wood_label)
+	_gold_label = Label.new()
+	sbox.add_child(_gold_label)
+	_econ_label = Label.new()
+	sbox.add_child(_econ_label)
+	_prestige_label = Label.new()
+	sbox.add_child(_prestige_label)
+	_walker_label = Label.new()
+	sbox.add_child(_walker_label)
+
+	# 卡片 2：朝廷诏令
+	var edict_card := PanelContainer.new()
+	side.add_child(edict_card)
+	var ebox := VBoxContainer.new()
+	edict_card.add_child(ebox)
+	var edict_title := Label.new()
+	edict_title.text = "朝廷诏令"
+	edict_title.add_theme_font_size_override("font_size", 16)
+	ebox.add_child(edict_title)
+	_edict_label = Label.new()
+	_edict_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ebox.add_child(_edict_label)
+
+	# 卡片 3：建造（放大、占满右侧剩余高度）
+	var build_card := PanelContainer.new()
+	build_card.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	side.add_child(build_card)
+	var bwrap := VBoxContainer.new()
+	build_card.add_child(bwrap)
+	var build_title := Label.new()
+	build_title.text = "建造"
+	build_title.add_theme_font_size_override("font_size", 16)
+	bwrap.add_child(build_title)
+	_tool_label = Label.new()
+	_tool_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	bwrap.add_child(_tool_label)
 	var scroll := ScrollContainer.new()
-	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
-	panel.add_child(scroll)
-
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	bwrap.add_child(scroll)
 	var box := VBoxContainer.new()
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(box)
-
-	_date_label = Label.new()
-	box.add_child(_date_label)
-	_pop_label = Label.new()
-	box.add_child(_pop_label)
-	_grain_label = Label.new()
-	box.add_child(_grain_label)
-	_flour_label = Label.new()
-	box.add_child(_flour_label)
-	_food_label = Label.new()
-	box.add_child(_food_label)
-	_wood_label = Label.new()
-	box.add_child(_wood_label)
-	_gold_label = Label.new()
-	box.add_child(_gold_label)
-	_econ_label = Label.new()
-	box.add_child(_econ_label)
-	_prestige_label = Label.new()
-	box.add_child(_prestige_label)
-	_edict_label = Label.new()
-	_edict_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	box.add_child(_edict_label)
-	_walker_label = Label.new()
-	box.add_child(_walker_label)
-	_tool_label = Label.new()
-	box.add_child(_tool_label)
-
-	var sep := HSeparator.new()
-	box.add_child(sep)
-
-	# 建造菜单（法老王式两级方形图标菜单）
-	var menu_title := Label.new()
-	menu_title.text = "建造"
-	box.add_child(menu_title)
 	_menu_box = VBoxContainer.new()
 	box.add_child(_menu_box)
 	_show_build_menu_root()
@@ -1386,56 +1485,11 @@ func _build_hud() -> void:
 	var cancel_btn := Button.new()
 	cancel_btn.text = "取消建造（右键/Esc）"
 	cancel_btn.pressed.connect(_on_tool_selected.bind(""))
-	box.add_child(cancel_btn)
-
-	var sep2 := HSeparator.new()
-	box.add_child(sep2)
-
-	_slot_btn = Button.new()
-	_slot_btn.pressed.connect(_on_slot_cycle_pressed)
-	box.add_child(_slot_btn)
-
-	var save_btn := Button.new()
-	save_btn.text = "保存到当前槽"
-	save_btn.pressed.connect(_on_save_pressed)
-	box.add_child(save_btn)
-
-	var load_btn := Button.new()
-	load_btn.text = "读取当前槽"
-	load_btn.pressed.connect(_on_load_pressed)
-	box.add_child(load_btn)
-
-	# 游戏内难度切换（立即生效，随存档保存）
-	var diff_row := HBoxContainer.new()
-	box.add_child(diff_row)
-	var diff_label := Label.new()
-	diff_label.text = "难度："
-	diff_row.add_child(diff_label)
-	var diff_opt := OptionButton.new()
-	diff_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var diff_keys := ["easy", "normal", "hard"]
-	for d: String in diff_keys:
-		diff_opt.add_item(str(DIFFICULTY[d]["name"]))
-	diff_opt.selected = maxi(0, diff_keys.find(difficulty))
-	diff_opt.item_selected.connect(func(idx: int) -> void:
-		difficulty = diff_keys[idx]
-		_update_hud()
-		_show_message("难度已切换为：%s" % _diff_name()))
-	diff_row.add_child(diff_opt)
-
-	var menu_btn := Button.new()
-	menu_btn.text = "返回主菜单"
-	menu_btn.pressed.connect(_on_menu_pressed)
-	box.add_child(menu_btn)
+	bwrap.add_child(cancel_btn)
 
 	_message_label = Label.new()
 	_message_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	box.add_child(_message_label)
-
-	var help_label := Label.new()
-	help_label.text = "滚轮缩放 | 中键/WASD平移 | Q/E旋转"
-	help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	box.add_child(help_label)
+	bwrap.add_child(_message_label)
 
 	# 建筑查看面板（左键点建筑弹出，默认隐藏）
 	_info_panel = PanelContainer.new()
@@ -1486,7 +1540,7 @@ func _make_x_icon() -> ImageTexture:
 
 func _make_square_btn(icon: Texture2D, text: String) -> Button:
 	var btn := Button.new()
-	btn.custom_minimum_size = Vector2(76, 76)
+	btn.custom_minimum_size = Vector2(92, 92)
 	btn.icon = icon
 	btn.expand_icon = true
 	btn.text = text
