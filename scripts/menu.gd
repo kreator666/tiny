@@ -6,6 +6,8 @@ const MAIN_SCENE := "res://scenes/main.tscn"
 
 
 func _ready() -> void:
+	# 防御：若从游戏场景返回，根 Viewport 上可能残留相机 canvas_transform
+	get_viewport().canvas_transform = Transform2D.IDENTITY
 	var bg := ColorRect.new()
 	bg.color = Color(0.13, 0.12, 0.10)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)

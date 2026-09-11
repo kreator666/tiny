@@ -1313,6 +1313,9 @@ func _update_slot_btn() -> void:
 
 
 func _on_menu_pressed() -> void:
+	# canvas_transform 挂在根 Viewport 上，场景切换不会清除，
+	# 残留的游戏相机会把菜单整体偏移/缩放，必须先复位
+	get_viewport().canvas_transform = Transform2D.IDENTITY
 	get_tree().change_scene_to_file("res://scenes/menu.tscn")
 
 
