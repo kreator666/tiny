@@ -153,6 +153,14 @@ const ESTATE_GROUND_OFF := {
 	3: [Vector2(-47, -66), Vector2(-28, -62), Vector2(-47, -67), Vector2(-70, -60)],
 }
 
+# 建造菜单分类（法老王式）：一级为分类方块 + 道路/拆除，二级为分类内建筑
+const BUILD_MENU := {
+	"农业": ["farm", "mill"],
+	"商业": ["market"],
+	"市政": ["well", "clinic", "repair"],
+	"工业": ["woodcutter"],
+}
+
 var _pop_label: Label
 var _grain_label: Label
 var _flour_label: Label
@@ -167,6 +175,7 @@ var _prestige_label: Label
 var _edict_label: Label
 var _econ_label: Label
 var _tool_buttons := {}
+var _menu_box: VBoxContainer  # 建造菜单容器（两级：分类 -> 建筑）
 var _active_slot := 1
 var _slot_btn: Button
 var _minimap: Minimap
@@ -1363,28 +1372,16 @@ func _build_hud() -> void:
 	var sep := HSeparator.new()
 	box.add_child(sep)
 
-	# 建造按钮（跳过不可直接建造的类型，如瓦房）
-	for type: String in building_defs:
-		var def: Dictionary = building_defs[type]
-		if bool(def.get("buildable", true)) == false:
-			continue
-		var btn := Button.new()
-		btn.text = "建造%s（%d 金）" % [def["name"], int(def["cost_gold"])]
-		btn.tooltip_text = def["desc"]
-		btn.toggle_mode = true
-		btn.pressed.connect(_on_tool_selected.bind(type))
-		box.add_child(btn)
-		_tool_buttons[type] = btn
-
-	var demo_btn := Button.new()
-	demo_btn.text = "拆除（返还半价）"
-	demo_btn.toggle_mode = true
-	demo_btn.pressed.connect(_on_tool_selected.bind("demolish"))
-	box.add_child(demo_btn)
-	_tool_buttons["demolish"] = demo_btn
+	# 建造菜单（法老王式两级方形图标菜单）
+	var menu_title := Label.new()
+	menu_title.text = "建造"
+	box.add_child(menu_title)
+	_menu_box = VBoxContainer.new()
+	box.add_child(_menu_box)
+	_show_build_menu_root()
 
 	var cancel_btn := Button.new()
-	cancel_btn.text = "取消建造"
+	cancel_btn.text = "取消建造（右键/Esc）"
 	cancel_btn.pressed.connect(_on_tool_selected.bind(""))
 	box.add_child(cancel_btn)
 
@@ -1463,6 +1460,95 @@ func _build_hud() -> void:
 	panel_close_btn.text = "关闭"
 	panel_close_btn.pressed.connect(_close_info_panel)
 	ibox.add_child(panel_close_btn)
+
+
+func _menu_icon(btype: String) -> Texture2D:
+	var def: Dictionary = building_defs[btype]
+	if def.has("tex_dirs"):
+		return def["tex_dirs"][0]
+	return def["tex"]
+
+
+func _make_x_icon() -> ImageTexture:
+	# 拆除按钮图标：红叉（素材包里没有合适的图，程序绘制）
+	var img := Image.create(20, 20, false, Image.FORMAT_RGBA8)
+	var red := Color(0.85, 0.25, 0.2)
+	for i in 20:
+		for w in range(-1, 2):
+			if i + w >= 0 and i + w < 20:
+				img.set_pixel(i + w, i, red)
+				img.set_pixel(i + w, 19 - i, red)
+	return ImageTexture.create_from_image(img)
+
+
+func _make_square_btn(icon: Texture2D, text: String) -> Button:
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(76, 76)
+	btn.icon = icon
+	btn.expand_icon = true
+	btn.text = text
+	btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	btn.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+	return btn
+
+
+func _clear_build_menu() -> void:
+	for child: Node in _menu_box.get_children():
+		_menu_box.remove_child(child)
+		child.queue_free()
+	_tool_buttons.clear()  # 被释放的按钮不能留在映射里
+
+
+func _on_category_pressed(cat: String) -> void:
+	Sound.play("click")
+	_show_build_menu_category(cat)
+
+
+func _show_build_menu_root() -> void:
+	_clear_build_menu()
+	var grid := GridContainer.new()
+	grid.columns = 3
+	_menu_box.add_child(grid)
+	for cat: String in BUILD_MENU:
+		var members: Array = BUILD_MENU[cat]
+		var names: Array = members.map(func(t: String) -> String: return building_defs[t]["name"])
+		var btn := _make_square_btn(_menu_icon(members[0]), cat)
+		btn.tooltip_text = "%s：%s" % [cat, "、".join(names)]
+		btn.pressed.connect(_on_category_pressed.bind(cat))
+		grid.add_child(btn)
+	var road_btn := _make_square_btn(_menu_icon("road"), "道路")
+	road_btn.tooltip_text = "建造道路（2 金），连接建筑供行人通行"
+	road_btn.toggle_mode = true
+	road_btn.pressed.connect(_on_tool_selected.bind("road"))
+	grid.add_child(road_btn)
+	_tool_buttons["road"] = road_btn
+	var demo_btn := _make_square_btn(_make_x_icon(), "拆除")
+	demo_btn.tooltip_text = "拆除建筑或树木（返还半价）"
+	demo_btn.toggle_mode = true
+	demo_btn.pressed.connect(_on_tool_selected.bind("demolish"))
+	grid.add_child(demo_btn)
+	_tool_buttons["demolish"] = demo_btn
+
+
+func _show_build_menu_category(cat: String) -> void:
+	_clear_build_menu()
+	var back := Button.new()
+	back.text = "← 返回"
+	back.pressed.connect(func() -> void:
+		Sound.play("click")
+		_show_build_menu_root())
+	_menu_box.add_child(back)
+	var grid := GridContainer.new()
+	grid.columns = 3
+	_menu_box.add_child(grid)
+	for btype: String in BUILD_MENU[cat]:
+		var def: Dictionary = building_defs[btype]
+		var btn := _make_square_btn(_menu_icon(btype), def["name"])
+		btn.tooltip_text = "%s\n造价 %d 金" % [def["desc"], int(def["cost_gold"])]
+		btn.toggle_mode = true
+		btn.pressed.connect(_on_tool_selected.bind(btype))
+		grid.add_child(btn)
+		_tool_buttons[btype] = btn
 
 
 func _on_tool_selected(type: String) -> void:
