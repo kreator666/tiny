@@ -8,7 +8,10 @@ extends Node2D
 ##   生产链：农田 -> 粮食 -> 磨坊 -> 面粉 -> 市集 -> 食品 -> 民居。
 ##   住房演进：茅屋(1格,4人) -> 瓦房(1格,8人) -> 宅院(2x2,32人) -> 豪华大宅(2x2,48人)。
 ##     条件：持续有行人服务 + 无饥荒；瓦房凑齐 2x2 空地自动合并为宅院。
-##   建筑需邻接道路激活；行人（居民/挑夫）沿路随机行走并服务相邻民居。
+##   建筑需邻接道路激活；行人（居民/挑夫/挑水夫/伐木工）沿路随机行走并服务相邻民居。
+##   劳动：人口即劳力，工业建筑占用岗位（农田1/磨坊1/市集1/水井1/伐木屋2），
+##        招不满人按在岗比例减产；维护度每月下降，低于 60% 半产、低于 30% 停产，可花钱修缮。
+##   树木：拆除工具花 10 金立刻砍除；或建伐木屋免费缓慢砍路边树。
 ## 时间流速：每 2 秒 = 1 个月。
 ## 素材：程序化生成工笔画风（tools/gen_gongbi_assets.py）。
 
@@ -108,6 +111,13 @@ var _edict_counter := 0
 var last_tax_income := 0.0
 var last_upkeep := 0.0
 
+# 劳动与维护
+var employed: Dictionary = {}  # 工业建筑格 -> 在岗人数
+var jobs_total := 0
+var jobs_filled := 0
+var building_cond: Dictionary = {}  # 建筑/大院锚点格 -> 维护度 0..100（缺失=100）
+var selected_cell := Vector2i(-1, -1)  # 左键查看的建筑/树木格
+
 # 灾害与事件
 var burning: Dictionary = {}  # 建筑格 -> 剩余燃烧月数
 var locust_months_left := 0  # 蝗灾：农田减产剩余月数
@@ -140,6 +150,10 @@ var _tool_buttons := {}
 var _active_slot := 1
 var _slot_btn: Button
 var _minimap: Minimap
+var _info_panel: PanelContainer
+var _info_title: Label
+var _info_body: Label
+var _repair_btn: Button
 
 
 func _ready() -> void:
@@ -148,6 +162,7 @@ func _ready() -> void:
 	_generate_terrain()
 	_build_hud()
 	_refresh_capacity()
+	_assign_jobs()
 	_update_hud()
 	_apply_rotation(0)
 	var map_center := MAP_ORIGIN + Vector2(GRID_W, GRID_H) * CELL / 2
@@ -317,6 +332,8 @@ func _spawn_walkers() -> void:
 			kind = 1
 		elif btype == "well":
 			kind = 2
+		elif btype == "woodcutter":
+			kind = 3
 		if kind < 0 or walkers.size() >= WALKER_MAX:
 			continue
 		if not _has_adjacent_road(cell):
@@ -356,6 +373,8 @@ func _spawn_walker_from(start: Vector2i, home: Variant, kind: int) -> void:
 		"kind": kind,
 	})
 	_service_around(start, kind == 2)
+	if kind == 3:
+		_chop_adjacent_tree(start)
 
 
 func _choose_next_road(cur: Vector2i, prev: Variant) -> Vector2i:
@@ -391,6 +410,8 @@ func _update_walkers(delta: float) -> void:
 			w.t = 0.0
 			w.left -= 1
 			_service_around(w.cur, int(w.get("kind", 0)) == 2)
+			if int(w.get("kind", 0)) == 3:
+				_chop_adjacent_tree(w.cur)
 			var next: Vector2i = _choose_next_road(w.cur, w.prev)
 			w.prev = w.cur
 			if next == Vector2i(-1, -1) or w.left <= 0:
@@ -407,6 +428,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		match event.keycode:
 			KEY_ESCAPE:
 				_on_tool_selected("")
+				_close_info_panel()
 			KEY_Q:
 				_rotate_view(1)
 			KEY_E:
@@ -424,9 +446,13 @@ func _unhandled_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_RIGHT:
 				if event.pressed:
 					_on_tool_selected("")
+					_close_info_panel()
 			MOUSE_BUTTON_LEFT:
 				if event.pressed:
-					_try_place(_screen_to_cell(_mouse_grid_pos()))
+					if selected_tool.is_empty():
+						_select_at(_screen_to_cell(_mouse_grid_pos()))
+					else:
+						_try_place(_screen_to_cell(_mouse_grid_pos()))
 	elif event is InputEventMouseMotion:
 		if _dragging:
 			_cam_pos -= event.relative / _zoom.x
@@ -478,6 +504,7 @@ func _try_demolish(cell: Vector2i) -> void:
 		estates.erase(anchor)
 		serviced.erase(anchor)
 		evolve_prog.erase(anchor)
+		building_cond.erase(anchor)
 		gold += 40 * tier  # 大院按等级退款
 		_show_message("拆除了大院，返还 %d 金" % int(40 * tier))
 	elif buildings.has(cell):
@@ -486,8 +513,17 @@ func _try_demolish(cell: Vector2i) -> void:
 		buildings.erase(cell)
 		serviced.erase(cell)
 		evolve_prog.erase(cell)
+		building_cond.erase(cell)
 		gold += refund
 		_show_message("拆除了 %s，返还 %d 金" % [building_defs[btype]["name"], refund])
+	elif trees.has(cell):
+		const TREE_COST := 10
+		if gold < TREE_COST:
+			_show_message("金钱不足（砍树需 %d 金，或建伐木屋免费砍伐）" % TREE_COST)
+			return
+		gold -= TREE_COST
+		trees.erase(cell)
+		_show_message("砍除了一棵树（%d 金）" % TREE_COST)
 	else:
 		_show_message("这里没有可拆除的建筑")
 		return
@@ -652,6 +688,7 @@ func _events_month() -> void:
 				serviced.erase(cell)
 				watered.erase(cell)
 				evolve_prog.erase(cell)
+				building_cond.erase(cell)
 				_show_message("一场火灾烧毁了%s！" % building_defs[btype]["name"])
 	_refresh_capacity()
 	if locust_months_left > 0:
@@ -693,6 +730,7 @@ func _trigger_event() -> void:
 
 func _advance_month() -> void:
 	_months_total += 1
+	_assign_jobs()
 
 	# 生产链
 	var stock := {"grain": grain, "flour": flour, "food": food}
@@ -701,11 +739,14 @@ func _advance_month() -> void:
 		var def: Dictionary = building_defs.get(btype, {})
 		if not _has_adjacent_road(cell):
 			continue
+		var eff := _work_efficiency(cell, def)
+		if eff <= 0.0:
+			continue
 		if def.has("grain_per_month"):
 			var mult := 0.5 if locust_months_left > 0 else 1.0
-			stock["grain"] = float(stock["grain"]) + float(def["grain_per_month"]) * mult
+			stock["grain"] = float(stock["grain"]) + float(def["grain_per_month"]) * mult * eff
 		if def.has("convert_from"):
-			var use: float = minf(float(def["convert_rate"]), float(stock[def["convert_from"]]))
+			var use: float = minf(float(def["convert_rate"]) * eff, float(stock[def["convert_from"]]))
 			stock[def["convert_from"]] = float(stock[def["convert_from"]]) - use
 			stock[def["convert_to"]] = float(stock[def["convert_to"]]) + use
 	grain = stock["grain"]
@@ -760,6 +801,13 @@ func _advance_month() -> void:
 
 	# 灾害与事件
 	_events_month()
+
+	# 维护度自然损耗（道路不衰减；大院慢一点）
+	for cell: Vector2i in buildings:
+		if buildings[cell] != "road":
+			building_cond[cell] = maxi(0, _cond_of(cell) - 2)
+	for anchor: Vector2i in estates:
+		building_cond[anchor] = maxi(0, _cond_of(anchor) - 1)
 
 	month += 1
 	if month > 12:
@@ -865,6 +913,161 @@ func _refresh_capacity() -> void:
 	population = mini(population, pop_capacity)  # 拆除后人口不超过容量
 
 
+# ---------- 劳动 / 维护 / 查看 ----------
+
+func _assign_jobs() -> void:
+	## 人口即劳力，按建筑放置顺序依次填满岗位；不邻路的建筑无法开工
+	employed.clear()
+	jobs_total = 0
+	jobs_filled = 0
+	var workforce := population
+	for cell: Vector2i in buildings:
+		var jobs := int(building_defs[buildings[cell]].get("jobs", 0))
+		if jobs <= 0:
+			continue
+		jobs_total += jobs
+		var take := 0
+		if _has_adjacent_road(cell):
+			take = mini(jobs, workforce)
+			workforce -= take
+		employed[cell] = take
+		jobs_filled += take
+
+
+func _cond_of(key: Vector2i) -> int:
+	return int(building_cond.get(key, 100))
+
+
+func _work_efficiency(cell: Vector2i, def: Dictionary) -> float:
+	## 维护度 <30 停产，<60 半产；有岗位的建筑再按在岗比例折减
+	var cond := _cond_of(cell)
+	if cond < 30:
+		return 0.0
+	var eff := 0.5 if cond < 60 else 1.0
+	if def.has("jobs"):
+		var jobs := int(def["jobs"])
+		if jobs > 0:
+			eff *= float(employed.get(cell, 0)) / jobs
+	return eff
+
+
+func _occupants(cap: int) -> int:
+	return int(round(population * cap / pop_capacity)) if pop_capacity > 0 else 0
+
+
+func _repair_cost(key: Vector2i, base_cost: int) -> int:
+	return maxi(1, (100 - _cond_of(key)) * base_cost / 100)
+
+
+func _chop_adjacent_tree(road_cell: Vector2i) -> void:
+	for dir: Vector2i in DIRS:
+		var nb := road_cell + dir
+		if trees.has(nb):
+			trees.erase(nb)
+			queue_redraw()
+			return
+
+
+func _select_at(cell: Vector2i) -> void:
+	if buildings.has(cell) or trees.has(cell) or _estate_anchor_at(cell) != Vector2i(-1, -1):
+		selected_cell = cell
+		_refresh_info_panel()
+		Sound.play("click")
+	else:
+		_close_info_panel()
+
+
+func _close_info_panel() -> void:
+	selected_cell = Vector2i(-1, -1)
+	if _info_panel:
+		_info_panel.visible = false
+	queue_redraw()
+
+
+func _refresh_info_panel() -> void:
+	if _info_panel == null or selected_cell == Vector2i(-1, -1):
+		return
+	var cell := selected_cell
+	var anchor := _estate_anchor_at(cell)
+	var key := anchor if anchor != Vector2i(-1, -1) else cell
+	var lines: Array = []
+	var show_repair := false
+	if anchor != Vector2i(-1, -1):
+		var tier: int = estates[anchor]
+		_info_title.text = "豪华大宅" if tier == 3 else "宅院"
+		var cap: int = ESTATE_CAP[tier]
+		lines.append("居住人口：%d / %d" % [_occupants(cap), cap])
+		lines.append("维护度：%d%%" % _cond_of(key))
+		lines.append("服务：%s　供水：%s" % [_yesno(_recently_serviced(key)), _yesno(_recently_watered(key))])
+		show_repair = true
+	elif buildings.has(cell):
+		var btype: String = buildings[cell]
+		_info_title.text = building_defs[btype]["name"]
+		if btype == "hut" or btype == "tilehouse":
+			var cap2: int = HUT_CAP if btype == "hut" else TILEHOUSE_CAP
+			lines.append("居住人口：%d / %d" % [_occupants(cap2), cap2])
+			lines.append("维护度：%d%%" % _cond_of(key))
+			lines.append("服务：%s　供水：%s" % [_yesno(_recently_serviced(key)), _yesno(_recently_watered(key))])
+			if btype == "hut":
+				lines.append("升级进度：%d / %d 月" % [int(evolve_prog.get(key, 0)), EVOLVE_HUT])
+		elif btype == "road":
+			lines.append("供行人通行，连接建筑。")
+		else:
+			var def: Dictionary = building_defs[btype]
+			if int(def.get("jobs", 0)) > 0:
+				var jobs := int(def["jobs"])
+				var on := int(employed.get(key, 0))
+				lines.append("岗位：%d　在岗：%d（效率 %d%%）" % [jobs, on, int(_work_efficiency(key, def) * 100)])
+			lines.append("维护度：%d%%" % _cond_of(key))
+			if def.has("grain_per_month"):
+				lines.append("粮产：每月 %d（需有人劳作）" % int(def["grain_per_month"]))
+			if btype == "woodcutter":
+				lines.append("伐木工沿路巡行，免费砍除路边树木。")
+		show_repair = btype != "road"
+	elif trees.has(cell):
+		_info_title.text = "树木"
+		lines.append("遮挡建造。可花 10 金立刻砍除，")
+		lines.append("或建伐木屋派工人免费缓慢砍伐。")
+	_info_body.text = "
+".join(lines)
+	if show_repair:
+		var base := 40 * int(estates.get(key, 1)) if anchor != Vector2i(-1, -1) else int(building_defs[buildings[cell]]["cost_gold"])
+		var cost := _repair_cost(key, base)
+		_repair_btn.visible = true
+		_repair_btn.text = "修缮（%d 金）" % cost
+		_repair_btn.disabled = _cond_of(key) >= 100 or gold < cost
+	else:
+		_repair_btn.visible = false
+	_info_panel.visible = true
+
+
+func _yesno(v: bool) -> String:
+	return "有" if v else "无"
+
+
+func _on_repair_pressed() -> void:
+	var cell := selected_cell
+	var anchor := _estate_anchor_at(cell)
+	var key := anchor if anchor != Vector2i(-1, -1) else cell
+	var base := 40 * int(estates.get(key, 1)) if anchor != Vector2i(-1, -1) else int(building_defs[buildings[cell]]["cost_gold"])
+	var cost := _repair_cost(key, base)
+	if _cond_of(key) >= 100 or gold < cost:
+		return
+	gold -= cost
+	building_cond[key] = 100
+	_show_message("修缮完成")
+	Sound.play("coin")
+	_update_hud()
+	_refresh_info_panel()
+	queue_redraw()
+
+
+func _on_panel_demolish_pressed() -> void:
+	var cell := selected_cell
+	_close_info_panel()
+	_try_demolish(cell)
+
+
 # ---------- 存档 ----------
 
 func _build_state() -> Dictionary:
@@ -877,6 +1080,9 @@ func _build_state() -> Dictionary:
 	var tree_list := []
 	for cell: Vector2i in trees:
 		tree_list.append({"x": cell.x, "y": cell.y})
+	var cond_list := []
+	for key: Vector2i in building_cond:
+		cond_list.append({"x": key.x, "y": key.y, "cond": building_cond[key]})
 	return {
 		"population": population,
 		"grain": grain,
@@ -892,6 +1098,7 @@ func _build_state() -> Dictionary:
 		"buildings": list,
 		"estates": estate_list,
 		"trees": tree_list,
+		"conds": cond_list,
 	}
 
 
@@ -915,7 +1122,11 @@ func _apply_state(state: Dictionary) -> void:
 	walkers.clear()
 	evolve_prog.clear()
 	burning.clear()
+	building_cond.clear()
+	employed.clear()
 	locust_months_left = 0
+	for entry: Dictionary in state.get("conds", []):
+		building_cond[Vector2i(int(entry["x"]), int(entry["y"]))] = int(entry["cond"])
 	for entry: Dictionary in state["buildings"]:
 		buildings[Vector2i(int(entry["x"]), int(entry["y"]))] = String(entry["type"])
 	for entry: Dictionary in state.get("estates", []):
@@ -1068,6 +1279,33 @@ func _build_hud() -> void:
 	help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(help_label)
 
+	# 建筑查看面板（左键点建筑弹出，默认隐藏）
+	_info_panel = PanelContainer.new()
+	_info_panel.set_anchors_preset(Control.PRESET_BOTTOM_RIGHT)
+	_info_panel.position = Vector2(-580, -252)
+	_info_panel.custom_minimum_size = Vector2(280, 0)
+	_info_panel.visible = false
+	layer.add_child(_info_panel)
+	var ibox := VBoxContainer.new()
+	_info_panel.add_child(ibox)
+	_info_title = Label.new()
+	_info_title.add_theme_font_size_override("font_size", 18)
+	ibox.add_child(_info_title)
+	_info_body = Label.new()
+	_info_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ibox.add_child(_info_body)
+	_repair_btn = Button.new()
+	_repair_btn.pressed.connect(_on_repair_pressed)
+	ibox.add_child(_repair_btn)
+	var panel_demo_btn := Button.new()
+	panel_demo_btn.text = "拆除该建筑"
+	panel_demo_btn.pressed.connect(_on_panel_demolish_pressed)
+	ibox.add_child(panel_demo_btn)
+	var panel_close_btn := Button.new()
+	panel_close_btn.text = "关闭"
+	panel_close_btn.pressed.connect(_close_info_panel)
+	ibox.add_child(panel_close_btn)
+
 
 func _on_tool_selected(type: String) -> void:
 	Sound.play("click")
@@ -1086,7 +1324,7 @@ func _on_tool_selected(type: String) -> void:
 
 func _update_hud() -> void:
 	_date_label.text = "第 %d 年 %d 月" % [year, month]
-	_pop_label.text = "人口：%d / %d" % [population, pop_capacity]
+	_pop_label.text = "人口：%d / %d（就业 %d/%d）" % [population, pop_capacity, jobs_filled, jobs_total]
 	_grain_label.text = "粮食：%d" % int(grain)
 	_flour_label.text = "面粉：%d" % int(flour)
 	_food_label.text = "食品：%d" % int(food)
@@ -1095,6 +1333,8 @@ func _update_hud() -> void:
 	_prestige_label.text = "朝廷声望：%d" % prestige
 	_edict_label.text = _edict_desc()
 	_walker_label.text = "行人：%d" % walkers.size()
+	if _info_panel and _info_panel.visible:
+		_refresh_info_panel()
 
 
 func _show_message(text: String) -> void:
@@ -1150,6 +1390,8 @@ func _draw() -> void:
 				tint = Color(0.95, 0.78, 0.6)  # 挑夫：暖色
 			elif wkind == 2:
 				tint = Color(0.62, 0.8, 0.98)  # 挑水夫：蓝色
+			elif wkind == 3:
+				tint = Color(0.55, 0.75, 0.45)  # 伐木工：草绿
 			draw_texture(villager_tex, Vector2(-6, -18), tint)
 			draw_set_transform_matrix(Transform2D())
 			continue
@@ -1173,13 +1415,22 @@ func _draw() -> void:
 			draw_texture(_building_tex(item[2]), Vector2(-16, -30), btint)
 	draw_set_transform_matrix(Transform2D())
 
+	# 选中建筑高亮（金色框，大院描 2x2）
+	if selected_cell != Vector2i(-1, -1):
+		var s_anchor := _estate_anchor_at(selected_cell)
+		var s_origin := s_anchor if s_anchor != Vector2i(-1, -1) else selected_cell
+		var s_cells := 2 if s_anchor != Vector2i(-1, -1) else 1
+		var sp0 := MAP_ORIGIN + Vector2(s_origin) * CELL
+		var sc2 := [sp0, sp0 + Vector2(CELL * s_cells, 0), sp0 + Vector2(CELL * s_cells, CELL * s_cells), sp0 + Vector2(0, CELL * s_cells)]
+		draw_polyline(sc2 + [sc2[0]], Color(1.0, 0.88, 0.35), 2.0)
+
 	# 悬停预览
 	if _in_bounds(hover_cell) and not selected_tool.is_empty():
 		var p0 := MAP_ORIGIN + Vector2(hover_cell) * CELL
 		var corners := [p0, p0 + Vector2(CELL, 0), p0 + Vector2(CELL, CELL), p0 + Vector2(0, CELL)]
 		if selected_tool == "demolish":
 			# 拆除模式：有建筑显红框，没有显灰框
-			var can_demo := _estate_anchor_at(hover_cell) != Vector2i(-1, -1) or buildings.has(hover_cell)
+			var can_demo := _estate_anchor_at(hover_cell) != Vector2i(-1, -1) or buildings.has(hover_cell) or trees.has(hover_cell)
 			draw_colored_polygon(corners, Color(0.9, 0.3, 0.3, 0.3) if can_demo else Color(0.5, 0.5, 0.5, 0.2))
 			draw_polyline(corners + [corners[0]], Color(0.9, 0.3, 0.3) if can_demo else Color(0.5, 0.5, 0.5), 1.5)
 		else:

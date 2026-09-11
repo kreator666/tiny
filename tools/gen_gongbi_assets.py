@@ -203,6 +203,43 @@ def paint_market(door, flag_side):
     return img.resize((32, 32), Image.LANCZOS)
 
 
+def paint_woodcutter(door, pile_side):
+    S = 64
+    img = canvas(S, S, [8, 50, 56, 60])
+    d = ImageDraw.Draw(img)
+    # 原木小屋：赭石木板墙 + 茅顶
+    d.rectangle([14, 34, 50, 52], fill=(172, 132, 92), outline=INK)
+    for y in range(38, 52, 4):
+        d.line([(15, y), (49, y)], fill=(120, 88, 58, 150), width=1)
+    d.polygon([(6, 34), (20, 20), (44, 20), (58, 34)], fill=THATCH)
+    d.line([(6, 34), (20, 20), (44, 20), (58, 34), (6, 34)], fill=INK)
+    d.line([(20, 20), (44, 20)], fill=INK, width=2)
+    for x in range(12, 54, 4):
+        top_y = 20 + abs(x - 32) * 14 // 26
+        d.line([(x, top_y + 1), (x - 2 if x < 32 else x + 2, 33)],
+               fill=(120, 98, 66, 160), width=1)
+    if door is None:  # 背面：小窗
+        d.rectangle([28, 40, 36, 47], fill=(210, 200, 180), outline=INK)
+        d.line([(32, 40), (32, 47)], fill=INK)
+    else:
+        dx = {"c": 28, "l": 16, "r": 34}[door]
+        d.rectangle([dx, 40, dx + 8, 52], fill=(96, 66, 42), outline=INK)
+    # 柴堆：三根叠放的原木
+    if pile_side is not None:
+        px = 10 if pile_side == "l" else 44
+        for i, ly in enumerate((46, 42, 38)):
+            d.rounded_rectangle([px, ly, px + 10, ly + 4], 2,
+                                fill=(150, 116, 78), outline=INK)
+            d.ellipse([px + 7, ly, px + 11, ly + 4], fill=(196, 164, 116), outline=INK)
+            d.ellipse([px + 8, ly + 1, px + 10, ly + 3], outline=(120, 88, 58))
+        # 斜靠的斧头
+        ax = 22 if pile_side == "l" else 42
+        d.line([(ax, 52), (ax + 6, 36)], fill=INK, width=2)
+        d.polygon([(ax + 4, 34), (ax + 11, 36), (ax + 9, 42), (ax + 3, 40)],
+                  fill=(120, 128, 138), outline=INK)
+    return img.resize((32, 32), Image.LANCZOS)
+
+
 # 门朝向: d0正 d1右 d2背 d3左
 DOORS = ["c", "r", None, "l"]
 for i, door in enumerate(DOORS):
@@ -210,6 +247,7 @@ for i, door in enumerate(DOORS):
     save(paint_house(door), f"house_d{i}.png")
     save(paint_mill(door if door != "c" else "c", None if door is None else ("r" if i % 2 == 0 else "l")), f"mill_d{i}.png")
     save(paint_market(door, None if door is None else ("r" if i % 2 == 0 else "l")), f"market_d{i}.png")
+    save(paint_woodcutter(door, None if door is None else ("r" if i % 2 == 0 else "l")), f"woodcutter_d{i}.png")
 
 
 # ---------- 方向路块（32x32 贴地，conns 为屏幕方向 nesw 子集） ----------

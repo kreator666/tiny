@@ -27,7 +27,8 @@
 		"texture": "farm.png",
 		"flat": true,
 		"upkeep": 1,
-		"desc": "每月产出 4 粮食（需磨坊、市集加工后百姓才能吃）"
+		"desc": "每月产出 4 粮食（需磨坊、市集加工后百姓才能吃），需 1 名农人",
+		"jobs": 1
 	},
 	"mill": {
 		"name": "磨坊",
@@ -39,7 +40,8 @@
 		"dir": true,
 		"flat": false,
 		"upkeep": 3,
-		"desc": "每月把至多 6 粮磨成面粉，需邻路"
+		"desc": "每月把至多 6 粮磨成面粉，需邻路、1 名工人",
+		"jobs": 1
 	},
 	"market": {
 		"name": "市集",
@@ -51,7 +53,8 @@
 		"dir": true,
 		"flat": false,
 		"upkeep": 2,
-		"desc": "每月把至多 6 面粉做成食品，需邻路，派挑夫服务民居"
+		"desc": "每月把至多 6 面粉做成食品，需邻路、1 名工人，派挑夫服务民居",
+		"jobs": 1
 	},
 	"well": {
 		"name": "水井",
@@ -59,7 +62,8 @@
 		"texture": "well.png",
 		"flat": false,
 		"upkeep": 1,
-		"desc": "派挑水夫沿街送水，民居有水喝才能翻修升级"
+		"desc": "派挑水夫沿街送水，需 1 名工人；民居有水喝才能翻修升级",
+		"jobs": 1
 	},
 	"road": {
 		"name": "道路",
@@ -68,5 +72,15 @@
 		"flat": true,
 		"upkeep": 0.05,
 		"desc": "连接建筑，供行人通行"
+	},
+	"woodcutter": {
+		"name": "伐木屋",
+		"cost_gold": 50,
+		"jobs": 2,
+		"texture": "woodcutter",
+		"dir": true,
+		"flat": false,
+		"upkeep": 2,
+		"desc": "派 2 名伐木工沿路巡行，免费砍除路边树木（比花钱砍树慢）"
 	}
 }
