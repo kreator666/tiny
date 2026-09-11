@@ -142,11 +142,12 @@ var _spawn_accum := 0.0
 var _rot := 0
 var _cam_pos := Vector2.ZERO
 var _zoom := Vector2.ONE
-# 大宅立牌锚点偏移（按等级、旋转方向）：贴图实体基座近角对齐 2x2 地块前边线中点 +2px（同 1x1 建筑惯例）
-# 素材底部 y 与近角 x 逐图不一致（如 estate2_d2 整体偏高 8px），故逐图常量标定
+# 大宅立牌偏移（按等级、旋转方向）：锚点为 2x2 地块中心，
+# 取贴图基座触地中心对齐地块中心略靠前 (0,+8)（45° 视角透视习惯）。
+# 各贴图触地中心逐图实测（alpha 通道），素材间不一致故逐图标定。
 const ESTATE_GROUND_OFF := {
-	2: [Vector2(-48, -74), Vector2(-58, -75), Vector2(-47, -66), Vector2(-36, -75)],
-	3: [Vector2(-47, -73), Vector2(-39, -74), Vector2(-47, -74), Vector2(-56, -74)],
+	2: [Vector2(-48, -68), Vector2(-37, -64), Vector2(-47, -60), Vector2(-57, -64)],
+	3: [Vector2(-47, -66), Vector2(-28, -62), Vector2(-47, -67), Vector2(-70, -60)],
 }
 
 var _pop_label: Label
@@ -1466,9 +1467,11 @@ func _draw() -> void:
 		if item[2] == "estate":
 			var anchor: Vector2i = item[1]
 			var tier: int = estates[anchor]
-			# 落脚点：2x2 地块的底边中心
-			var ebase: Vector2 = _proj() * (MAP_ORIGIN + Vector2(anchor + Vector2i(1, 2)) * CELL)
-			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, ebase))
+			# 锚点：2x2 地块中心。立牌以屏幕轴绘制，若锚在前边线中点
+			# （1x1 惯例），宽贴图会整体偏左 32px、露出右半边空地；
+			# 大宅改为地块中心锚定，基座中心略靠前（+8）符合 45° 透视
+			var ecenter: Vector2 = _proj() * (MAP_ORIGIN + Vector2(anchor + Vector2i(1, 1)) * CELL)
+			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, ecenter))
 			var etex: Texture2D = estate_tex[tier][_rot]
 			draw_texture(etex, ESTATE_GROUND_OFF[tier][_rot])
 			draw_set_transform_matrix(Transform2D())
