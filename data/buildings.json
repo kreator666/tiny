@@ -23,11 +23,11 @@
 	"farm": {
 		"name": "农田",
 		"cost_gold": 10,
-		"grain_per_month": 4,
+		"grain_per_month": 8,
 		"texture": "farm.png",
 		"flat": true,
 		"upkeep": 1,
-		"desc": "每月产出 4 粮食（需磨坊、市集加工后百姓才能吃），需 1 名农人",
+		"desc": "每月产出 8 粮食（需磨坊、市集加工后百姓才能吃），需 1 名农人；2 座农田供得起 1 座磨坊",
 		"jobs": 1
 	},
 	"mill": {
@@ -35,12 +35,12 @@
 		"cost_gold": 40,
 		"convert_from": "grain",
 		"convert_to": "flour",
-		"convert_rate": 6,
+		"convert_rate": 16,
 		"texture": "mill",
 		"dir": true,
 		"flat": false,
 		"upkeep": 3,
-		"desc": "每月把至多 6 粮磨成面粉，需邻路、1 名工人",
+		"desc": "每月把至多 16 粮磨成面粉（1 座供 1 座市集），需邻路、1 名工人",
 		"jobs": 1
 	},
 	"market": {
@@ -48,12 +48,12 @@
 		"cost_gold": 30,
 		"convert_from": "flour",
 		"convert_to": "food",
-		"convert_rate": 6,
+		"convert_rate": 16,
 		"texture": "market",
 		"dir": true,
 		"flat": false,
 		"upkeep": 2,
-		"desc": "每月把至多 6 面粉做成食品，需邻路、1 名工人，派挑夫服务民居",
+		"desc": "每月把至多 16 面粉做成食品，可供 32 人口（标准难度），需邻路、1 名工人，派挑夫服务民居",
 		"jobs": 1
 	},
 	"well": {
