@@ -43,11 +43,13 @@ func _ready() -> void:
 	cont.pressed.connect(_on_continue)
 	box.add_child(cont)
 
-	var new_game := Button.new()
-	new_game.text = "新游戏"
-	new_game.custom_minimum_size = Vector2(300, 0)
-	new_game.pressed.connect(_on_new_game)
-	box.add_child(new_game)
+	# 新游戏可选难度：悠闲 / 标准 / 挑战
+	for d in ["easy", "normal", "hard"]:
+		var new_game := Button.new()
+		new_game.text = "新游戏（%s）" % str(Main.DIFFICULTY[d]["name"])
+		new_game.custom_minimum_size = Vector2(300, 0)
+		new_game.pressed.connect(_on_new_game.bind(d))
+		box.add_child(new_game)
 
 	for slot in range(1, SaveManager.SLOT_COUNT + 1):
 		var info := SaveManager.slot_info(slot)
@@ -75,7 +77,8 @@ func _on_continue() -> void:
 	get_tree().change_scene_to_file(MAIN_SCENE)
 
 
-func _on_new_game() -> void:
+func _on_new_game(d: String) -> void:
+	Main.difficulty = d
 	Main.boot_mode = "new"
 	get_tree().change_scene_to_file(MAIN_SCENE)
 

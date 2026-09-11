@@ -54,10 +54,18 @@ const ESTATE_UPKEEP := 5.0
 # 朝廷诏令轮换：缴税/贡粮/人口/宅院
 const EDICT_CYCLE := ["tax", "tribute", "population", "estate"]
 
+# 难度档位（主菜单选择，新游戏生效；读档时以存档为准）
+const DIFFICULTY := {
+	"easy": {"name": "悠闲", "gold": 15000.0, "food_use": 0.35, "growth": 1.6, "events": 0.5, "cond": 0.5},
+	"normal": {"name": "标准", "gold": 10000.0, "food_use": 0.5, "growth": 1.0, "events": 1.0, "cond": 1.0},
+	"hard": {"name": "挑战", "gold": 8000.0, "food_use": 0.65, "growth": 0.7, "events": 1.8, "cond": 1.6},
+}
+
 # 启动模式（由主菜单 scene 写入静态变量后切场景）：
 #   "new"  全新开局； "auto" 读自动存档； "slot" 读 boot_slot 指定存档位
 static var boot_mode := "new"
 static var boot_slot := 1
+static var difficulty := "normal"  # 由主菜单写入
 
 # 贴图运行时加载（素材包切换见 AssetLib；严禁在 _draw 中 load）
 var ground_tex: Array = []  # [ground_0, ground_1]
@@ -96,6 +104,7 @@ var evolve_prog: Dictionary = {}  # 居所 -> 连续达标月数
 
 var population := 0
 var pop_capacity := 0
+var shortage_months := 0  # 连续断粮月数：满 3 个月才开始流失人口
 var grain := 100.0
 var flour := 0.0
 var food := 20.0
@@ -167,6 +176,8 @@ func _ready() -> void:
 	_apply_rotation(0)
 	var map_center := MAP_ORIGIN + Vector2(GRID_W, GRID_H) * CELL / 2
 	_cam_pos = _proj() * map_center
+
+	gold = float(_diff("gold"))  # 新开局初始金钱（读档会被存档覆盖）
 
 	# 按主菜单指定的启动模式读档（测试脚本直接实例化本场景时保持 "new" 不受影响）
 	match boot_mode:
@@ -694,7 +705,7 @@ func _events_month() -> void:
 	if locust_months_left > 0:
 		locust_months_left -= 1
 	# 新事件概率：月均 4%
-	if randf() < 0.04:
+	if randf() < 0.04 * _diff("events"):
 		_trigger_event()
 
 
@@ -712,7 +723,7 @@ func _trigger_event() -> void:
 		_show_message("%s起火了！两月后将被烧毁" % building_defs[buildings[cell]]["name"])
 	elif roll < 50:
 		if population > 0:
-			var loss: int = maxi(1, population / 10)
+			var loss: int = maxi(1, population / 20)
 			population -= loss
 			_show_message("瘟疫流行，%d 人病亡" % loss)
 	elif roll < 75:
@@ -759,35 +770,34 @@ func _advance_month() -> void:
 		if buildings[cell] == "hut" or buildings[cell] == "tilehouse":
 			residence_keys.append(cell)
 	residence_keys.append_array(estates.keys())
-	var serviced_count := 0
+	var eff_capacity := 0
 	for key: Vector2i in residence_keys:
 		if _recently_serviced(key):
-			serviced_count += 1
-	var eff_capacity := 0
-	if not residence_keys.is_empty():
-		var ratio := float(serviced_count) / residence_keys.size()
-		eff_capacity = int(round(pop_capacity * ratio))
-		if ratio < 0.5 and population > 0:
-			_show_message("部分民居缺乏行人往来，发展停滞")
+			eff_capacity += _capacity_of(key)
 
-	# 人口吃食品
+	# 人口吃食品与移民迁入：有余房+有饭吃就稳定流入，连续断粮 3 个月才流失
 	var fed := false
-	var consumption: int = int(ceil(population * 0.5))
+	var consumption: int = int(ceil(population * _diff("food_use")))
 	if food >= consumption:
 		food -= consumption
 		fed = true
+		shortage_months = 0
 		if population < eff_capacity:
-			population = mini(eff_capacity, population + maxi(1, eff_capacity / 20))
+			var vacancy := eff_capacity - population
+			var influx := maxi(2, int(ceil(vacancy * 0.25 * _diff("growth"))))
+			population = mini(eff_capacity, population + influx)
 	elif population > 0:
 		food = 0.0
-		population = maxi(0, population - maxi(1, population / 10))
-		if grain > 0 or flour > 0:
-			_show_message("有粮无食！需要磨坊和市集把粮食端上桌")
+		shortage_months += 1
+		if shortage_months <= 3:
+			if grain > 0 or flour > 0:
+				_show_message("有粮无食！磨坊、市集产能跟不上，百姓已在挨饿")
+			else:
+				_show_message("存粮不足，百姓已在挨饿（连续断粮三月将致人口流失）")
 		else:
+			# 断粮超三个月：无论囤了多少原粮都开始流失人口
+			population = maxi(0, population - maxi(1, population / 20))
 			_show_message("饥荒！人口下降")
-
-	if not residence_keys.is_empty() and eff_capacity < pop_capacity and population > eff_capacity:
-		population = maxi(eff_capacity, population - maxi(1, population / 20))
 
 	# 住房演进（需吃饱 + 有服务）
 	_evolve_housing(fed)
@@ -802,12 +812,13 @@ func _advance_month() -> void:
 	# 灾害与事件
 	_events_month()
 
-	# 维护度自然损耗（道路不衰减；大院慢一点）
+	# 维护度自然损耗（道路不衰减；大院慢一点）；难度越高损耗越快
+	var cond_decay := maxi(1, int(round(2 * _diff("cond"))))
 	for cell: Vector2i in buildings:
 		if buildings[cell] != "road":
-			building_cond[cell] = maxi(0, _cond_of(cell) - 2)
+			building_cond[cell] = maxi(0, _cond_of(cell) - cond_decay)
 	for anchor: Vector2i in estates:
-		building_cond[anchor] = maxi(0, _cond_of(anchor) - 1)
+		building_cond[anchor] = maxi(0, _cond_of(anchor) - maxi(1, cond_decay / 2))
 
 	month += 1
 	if month > 12:
@@ -914,6 +925,25 @@ func _refresh_capacity() -> void:
 
 
 # ---------- 劳动 / 维护 / 查看 ----------
+
+func _diff(key: String) -> float:
+	return float(DIFFICULTY.get(difficulty, DIFFICULTY["normal"]).get(key, 1.0))
+
+
+func _diff_name() -> String:
+	return str(DIFFICULTY.get(difficulty, DIFFICULTY["normal"])["name"])
+
+
+func _capacity_of(key: Vector2i) -> int:
+	var btype: String = buildings.get(key, "")
+	if btype == "hut":
+		return HUT_CAP
+	if btype == "tilehouse":
+		return TILEHOUSE_CAP
+	if estates.has(key):
+		return int(ESTATE_CAP[estates[key]])
+	return 0
+
 
 func _assign_jobs() -> void:
 	## 人口即劳力，按建筑放置顺序依次填满岗位；不邻路的建筑无法开工
@@ -1092,6 +1122,8 @@ func _build_state() -> Dictionary:
 		"year": year,
 		"month": month,
 		"months_total": _months_total,
+		"difficulty": difficulty,
+		"shortage": shortage_months,
 		"prestige": prestige,
 		"edict": edict,
 		"edict_counter": _edict_counter,
@@ -1111,6 +1143,8 @@ func _apply_state(state: Dictionary) -> void:
 	year = int(state["year"])
 	month = int(state["month"])
 	_months_total = int(state.get("months_total", (year - 1) * 12 + month))
+	difficulty = str(state.get("difficulty", "normal"))
+	shortage_months = int(state.get("shortage", 0))
 	prestige = int(state.get("prestige", 0))
 	edict = state.get("edict", {})
 	_edict_counter = int(state.get("edict_counter", 0))
@@ -1125,6 +1159,7 @@ func _apply_state(state: Dictionary) -> void:
 	building_cond.clear()
 	employed.clear()
 	locust_months_left = 0
+	shortage_months = 0
 	for entry: Dictionary in state.get("conds", []):
 		building_cond[Vector2i(int(entry["x"]), int(entry["y"]))] = int(entry["cond"])
 	for entry: Dictionary in state["buildings"]:
@@ -1323,7 +1358,7 @@ func _on_tool_selected(type: String) -> void:
 
 
 func _update_hud() -> void:
-	_date_label.text = "第 %d 年 %d 月" % [year, month]
+	_date_label.text = "第 %d 年 %d 月 · %s" % [year, month, _diff_name()]
 	_pop_label.text = "人口：%d / %d（就业 %d/%d）" % [population, pop_capacity, jobs_filled, jobs_total]
 	_grain_label.text = "粮食：%d" % int(grain)
 	_flour_label.text = "面粉：%d" % int(flour)
