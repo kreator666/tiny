@@ -111,32 +111,36 @@ def gen(prompt: str) -> Image.Image:
 
 
 def _remove_opaque_bg(img: Image.Image) -> Image.Image:
-    """无透明通道时用泛洪填充抠掉背景：从四边开始，连通暗色区域视为背景。
-    （ Seedream 经代理会忽略 transparent_background 参数，兜底用 ）"""
+    """无透明通道时按边缘纸色泛洪填充抠背景（容忍度收紧，防漏进食内部）。"""
     from collections import deque
     img = img.convert("RGBA")
     w, h = img.size
     px = img.load()
 
-    def dark(p) -> bool:
-        return (p[0] * 30 + p[1] * 59 + p[2] * 11) // 100 < 90
+    # 角点纸色（多取几个角点取中位，防角上有墨点）
+    corners = [px[0, 0], px[w - 1, 0], px[0, h - 1], px[w - 1, h - 1]]
+    corners.sort(key=lambda p: p[0] + p[1] + p[2])
+    cr, cg, cb = corners[len(corners) // 2][:3]
+
+    def near_paper(p) -> bool:
+        return abs(p[0] - cr) + abs(p[1] - cg) + abs(p[2] - cb) <= 36
 
     q = deque()
     seen = bytearray(w * h)
     for x in range(w):
         for y in (0, h - 1):
-            if dark(px[x, y]) and not seen[y * w + x]:
+            if near_paper(px[x, y]) and not seen[y * w + x]:
                 seen[y * w + x] = 1
                 q.append((x, y))
     for y in range(h):
         for x in (0, w - 1):
-            if dark(px[x, y]) and not seen[y * w + x]:
+            if near_paper(px[x, y]) and not seen[y * w + x]:
                 seen[y * w + x] = 1
                 q.append((x, y))
     while q:
         x, y = q.popleft()
         for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-            if 0 <= nx < w and 0 <= ny < h and not seen[ny * w + nx] and dark(px[nx, ny]):
+            if 0 <= nx < w and 0 <= ny < h and not seen[ny * w + nx] and near_paper(px[nx, ny]):
                 seen[ny * w + nx] = 1
                 q.append((nx, ny))
     for y in range(h):
@@ -145,7 +149,7 @@ def _remove_opaque_bg(img: Image.Image) -> Image.Image:
             if seen[base + x]:
                 r, g, b, a = px[x, y]
                 px[x, y] = (r, g, b, 0)
-    # 背景边缘羽化：已透明像素邻接的不透明暗像素也半透明，去锯齿
+    # 背景边缘羽化：已透明像素邻接的不透明像素半透明，去锯齿
     edge = []
     for y in range(h):
         for x in range(w):
