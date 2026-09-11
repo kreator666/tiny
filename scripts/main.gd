@@ -43,7 +43,7 @@ const SPAWN_INTERVAL := 3.0
 # 住房演进参数
 const EVOLVE_HUT := 3  # 茅屋->瓦房所需达标月数
 const EVOLVE_MERGE := 3  # 瓦房->宅院所需达标月数
-const EVOLVE_ESTATE := 6  # 宅院->豪华大宅所需达标月数
+const EVOLVE_ESTATE := 4  # 宅院->豪华大宅所需达标月数
 const ESTATE_CAP := {2: 32, 3: 48}
 const HUT_CAP := 4
 const TILEHOUSE_CAP := 8
@@ -593,11 +593,11 @@ func _process(delta: float) -> void:
 
 
 func _recently_serviced(key: Vector2i) -> bool:
-	return _months_total - int(serviced.get(key, -999)) <= 1
+	return _months_total - int(serviced.get(key, -999)) <= 3
 
 
 func _recently_watered(key: Vector2i) -> bool:
-	return _months_total - int(watered.get(key, -999)) <= 1
+	return _months_total - int(watered.get(key, -999)) <= 3
 
 
 # 财政：分级人头税 - 建筑维护（含大院）。返回本月净收入。
@@ -852,7 +852,7 @@ func _evolve_housing(fed: bool) -> void:
 				_show_message("一间茅屋翻修成了瓦房")
 				Sound.play("evolve")
 		else:
-			evolve_prog[cell] = 0
+			evolve_prog[cell] = int(evolve_prog.get(cell, 0)) / 2  # 断档减半，不清零
 
 	# 瓦房 -> 宅院（2x2 合并；合并会改动 buildings，用 .get 防快照键失效）
 	for cell: Vector2i in buildings.keys():
@@ -863,7 +863,7 @@ func _evolve_housing(fed: bool) -> void:
 			if evolve_prog[cell] >= EVOLVE_MERGE and _try_merge_estate(cell):
 				pass  # 合并成功后 cell 已被移除
 		else:
-			evolve_prog[cell] = 0
+			evolve_prog[cell] = int(evolve_prog.get(cell, 0)) / 2  # 断档减半，不清零
 
 	# 宅院 -> 豪华大宅
 	for anchor: Vector2i in estates.keys():
@@ -877,7 +877,7 @@ func _evolve_housing(fed: bool) -> void:
 				_show_message("一座宅院扩建成了豪华大宅！")
 				Sound.play("evolve")
 		else:
-			evolve_prog[anchor] = 0
+			evolve_prog[anchor] = int(evolve_prog.get(anchor, 0)) / 2  # 断档减半，不清零
 
 
 func _try_merge_estate(cell: Vector2i) -> bool:
@@ -1035,6 +1035,8 @@ func _refresh_info_panel() -> void:
 		lines.append("居住人口：%d / %d" % [_occupants(cap), cap])
 		lines.append("维护度：%d%%" % _cond_of(key))
 		lines.append("服务：%s　供水：%s" % [_yesno(_recently_serviced(key)), _yesno(_recently_watered(key))])
+		if tier == 2:
+			lines.append("升级进度：%d / %d 月" % [int(evolve_prog.get(key, 0)), EVOLVE_ESTATE])
 		show_repair = true
 	elif buildings.has(cell):
 		var btype: String = buildings[cell]
@@ -1046,6 +1048,8 @@ func _refresh_info_panel() -> void:
 			lines.append("服务：%s　供水：%s" % [_yesno(_recently_serviced(key)), _yesno(_recently_watered(key))])
 			if btype == "hut":
 				lines.append("升级进度：%d / %d 月" % [int(evolve_prog.get(key, 0)), EVOLVE_HUT])
+			else:
+				lines.append("升级进度：%d / %d 月" % [int(evolve_prog.get(key, 0)), EVOLVE_MERGE])
 		elif btype == "road":
 			lines.append("供行人通行，连接建筑。")
 		else:
@@ -1234,8 +1238,13 @@ func _build_hud() -> void:
 	panel.custom_minimum_size = Vector2(268, 640)
 	layer.add_child(panel)
 
+	var scroll := ScrollContainer.new()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	panel.add_child(scroll)
+
 	var box := VBoxContainer.new()
-	panel.add_child(box)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(box)
 
 	_date_label = Label.new()
 	box.add_child(_date_label)
@@ -1305,6 +1314,24 @@ func _build_hud() -> void:
 	load_btn.text = "读取当前槽"
 	load_btn.pressed.connect(_on_load_pressed)
 	box.add_child(load_btn)
+
+	# 游戏内难度切换（立即生效，随存档保存）
+	var diff_row := HBoxContainer.new()
+	box.add_child(diff_row)
+	var diff_label := Label.new()
+	diff_label.text = "难度："
+	diff_row.add_child(diff_label)
+	var diff_opt := OptionButton.new()
+	diff_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var diff_keys := ["easy", "normal", "hard"]
+	for d: String in diff_keys:
+		diff_opt.add_item(str(DIFFICULTY[d]["name"]))
+	diff_opt.selected = maxi(0, diff_keys.find(difficulty))
+	diff_opt.item_selected.connect(func(idx: int) -> void:
+		difficulty = diff_keys[idx]
+		_update_hud()
+		_show_message("难度已切换为：%s" % _diff_name()))
+	diff_row.add_child(diff_opt)
 
 	var menu_btn := Button.new()
 	menu_btn.text = "返回主菜单"
