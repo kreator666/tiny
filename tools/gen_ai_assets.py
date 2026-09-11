@@ -54,6 +54,8 @@ BUILDINGS_1X1 = {
     "house": "grey brick village house with blue-grey tiled roof, wooden door and lattice window",
     "mill": "small water mill house with tiled roof and a wooden water wheel attached on the right side",
     "market": "traditional Chinese market stall with striped fabric awning on wooden poles and a red banner flag",
+    "clinic": "small traditional Chinese medicine hall, grey brick walls with blue-grey tiled roof, hanging wooden signboard with a green cross emblem, bundles of dried herbs drying under the eaves, a ceramic medicine jar by the wooden door",
+    "repair": "small traditional Chinese carpenter workshop, grey brick walls with blue-grey tiled roof, stacks of wooden planks and timber logs beside it, a wooden sawhorse and tool rack in front, sawdust on the ground",
 }
 
 ESTATES = {

@@ -65,6 +65,26 @@
 		"desc": "派挑水夫沿街送水，需 1 名工人；民居有水喝才能翻修升级",
 		"jobs": 1
 	},
+	"clinic": {
+		"name": "医馆",
+		"cost_gold": 60,
+		"texture": "clinic",
+		"dir": true,
+		"flat": false,
+		"upkeep": 2,
+		"desc": "派郎中沿街巡诊，需 1 名工人；瘟疫流行时，受过诊治的百姓可保八成平安",
+		"jobs": 1
+	},
+	"repair": {
+		"name": "维修站",
+		"cost_gold": 50,
+		"texture": "repair",
+		"dir": true,
+		"flat": false,
+		"upkeep": 2,
+		"desc": "派工匠沿街修缮，需 1 名工人、消耗木材：为邻路建筑恢复维护度（+10/次），并能扑灭火灾（2 木材）",
+		"jobs": 1
+	},
 	"road": {
 		"name": "道路",
 		"cost_gold": 2,
@@ -77,10 +97,11 @@
 		"name": "伐木屋",
 		"cost_gold": 50,
 		"jobs": 2,
+		"wood_per_month": 2,
 		"texture": "woodcutter",
 		"dir": true,
 		"flat": false,
 		"upkeep": 2,
-		"desc": "派 2 名伐木工沿路巡行，免费砍除路边树木（比花钱砍树慢）"
+		"desc": "每月产出 2 木材，供维修站修缮用；另派 2 名伐木工沿路巡行，免费砍除路边树木（+1 木材/棵）"
 	}
 }

@@ -97,9 +97,10 @@ var estates: Dictionary = {}  # 2x2 大院锚点 Vector2i -> 等级(2 宅院 / 3
 var grass: Dictionary = {}
 var trees: Dictionary = {}
 
-var walkers: Array = []  # {pos, cur, nxt, t, left, prev, kind} kind: 0居民 1挑夫 2挑水夫
+var walkers: Array = []  # {pos, cur, nxt, t, left, prev, kind} kind: 0居民 1挑夫 2挑水夫 3伐木工 4郎中 5工匠
 var serviced: Dictionary = {}  # 居所(民居格或大院锚点) -> 最近服务月份序号
 var watered: Dictionary = {}  # 居所 -> 最近送水月份序号
+var doctored: Dictionary = {}  # 居所 -> 最近诊治病月份序号（医馆郎中）
 var evolve_prog: Dictionary = {}  # 居所 -> 连续达标月数
 
 var population := 0
@@ -108,6 +109,7 @@ var shortage_months := 0  # 连续断粮月数：满 3 个月才开始流失人�
 var grain := 100.0
 var flour := 0.0
 var food := 20.0
+var wood := 0.0  # 木材：伐木屋产出，维修站修缮消耗
 var gold := 10000.0
 var year := 1
 var month := 1
@@ -130,6 +132,7 @@ var selected_cell := Vector2i(-1, -1)  # 左键查看的建筑/树木格
 # 灾害与事件
 var burning: Dictionary = {}  # 建筑格 -> 剩余燃烧月数
 var locust_months_left := 0  # 蝗灾：农田减产剩余月数
+var plague_months_left := 0  # 瘟疫：流行剩余月数（每月病亡，医馆诊治可减灾）
 
 var selected_tool := ""
 var hover_cell := Vector2i(-1, -1)
@@ -154,6 +157,7 @@ var _pop_label: Label
 var _grain_label: Label
 var _flour_label: Label
 var _food_label: Label
+var _wood_label: Label
 var _gold_label: Label
 var _date_label: Label
 var _tool_label: Label
@@ -352,6 +356,10 @@ func _spawn_walkers() -> void:
 			kind = 2
 		elif btype == "woodcutter":
 			kind = 3
+		elif btype == "clinic":
+			kind = 4
+		elif btype == "repair":
+			kind = 5
 		if kind < 0 or walkers.size() >= WALKER_MAX:
 			continue
 		if not _has_adjacent_road(cell):
@@ -393,6 +401,10 @@ func _spawn_walker_from(start: Vector2i, home: Variant, kind: int) -> void:
 	_service_around(start, kind == 2)
 	if kind == 3:
 		_chop_adjacent_tree(start)
+	elif kind == 4:
+		_doctor_around(start)
+	elif kind == 5:
+		_repair_around(start)
 
 
 func _choose_next_road(cur: Vector2i, prev: Variant) -> Vector2i:
@@ -419,6 +431,39 @@ func _service_around(road_cell: Vector2i, is_water: bool = false) -> void:
 				target[anchor] = _months_total
 
 
+func _doctor_around(road_cell: Vector2i) -> void:
+	# 郎中为邻路居所诊治（医馆服务，瘟疫期保命）
+	for dir: Vector2i in DIRS:
+		var nb := road_cell + dir
+		if buildings.get(nb, "") == "hut" or buildings.get(nb, "") == "tilehouse":
+			doctored[nb] = _months_total
+		else:
+			var anchor := _estate_anchor_at(nb)
+			if anchor != Vector2i(-1, -1):
+				doctored[anchor] = _months_total
+
+
+func _repair_around(road_cell: Vector2i) -> void:
+	# 工匠为邻路建筑恢复维护度（1 木材 +10），并扑灭火灾（2 木材）
+	for dir: Vector2i in DIRS:
+		var nb := road_cell + dir
+		if burning.has(nb):
+			if wood >= 2.0:
+				wood -= 2.0
+				burning.erase(nb)
+				_show_message("工匠扑灭了一场火灾！")
+			continue
+		if buildings.has(nb) and buildings[nb] != "road":
+			if building_cond.get(nb, 100) < 100 and wood >= 1.0:
+				wood -= 1.0
+				building_cond[nb] = mini(100, _cond_of(nb) + 10)
+			continue
+		var anchor := _estate_anchor_at(nb)
+		if anchor != Vector2i(-1, -1) and building_cond.get(anchor, 100) < 100 and wood >= 1.0:
+			wood -= 1.0
+			building_cond[anchor] = mini(100, _cond_of(anchor) + 10)
+
+
 func _update_walkers(delta: float) -> void:
 	for i in range(walkers.size() - 1, -1, -1):
 		var w: Dictionary = walkers[i]
@@ -427,9 +472,14 @@ func _update_walkers(delta: float) -> void:
 			w.cur = w.nxt
 			w.t = 0.0
 			w.left -= 1
-			_service_around(w.cur, int(w.get("kind", 0)) == 2)
-			if int(w.get("kind", 0)) == 3:
+			var wkind := int(w.get("kind", 0))
+			_service_around(w.cur, wkind == 2)
+			if wkind == 3:
 				_chop_adjacent_tree(w.cur)
+			elif wkind == 4:
+				_doctor_around(w.cur)
+			elif wkind == 5:
+				_repair_around(w.cur)
 			var next: Vector2i = _choose_next_road(w.cur, w.prev)
 			w.prev = w.cur
 			if next == Vector2i(-1, -1) or w.left <= 0:
@@ -601,6 +651,10 @@ func _recently_watered(key: Vector2i) -> bool:
 	return _months_total - int(watered.get(key, -999)) <= 3
 
 
+func _recently_doctored(key: Vector2i) -> bool:
+	return _months_total - int(doctored.get(key, -999)) <= 3
+
+
 # 财政：分级人头税 - 建筑维护（含大院）。返回本月净收入。
 func _economy_month() -> float:
 	var cap_total := 0
@@ -711,6 +765,26 @@ func _events_month() -> void:
 	_refresh_capacity()
 	if locust_months_left > 0:
 		locust_months_left -= 1
+	# 瘟疫流行：每月病亡，医馆诊治覆盖可减八成
+	if plague_months_left > 0:
+		plague_months_left -= 1
+		if population > 0:
+			var covered := 0
+			for cell: Vector2i in buildings:
+				if (buildings[cell] == "hut" or buildings[cell] == "tilehouse") and _recently_doctored(cell):
+					covered += _capacity_of(cell)
+			for anchor: Vector2i in estates:
+				if _recently_doctored(anchor):
+					covered += _capacity_of(anchor)
+			var coverage := minf(1.0, float(covered) / maxf(1.0, float(pop_capacity)))
+			var loss: int = maxi(1, int(round(population * 0.12 * (1.0 - coverage * 0.85))))
+			population = maxi(0, population - loss)
+			if coverage >= 0.99:
+				_show_message("瘟疫流行，所幸医馆诊治及时，仅 %d 人病亡" % loss)
+			else:
+				_show_message("瘟疫流行，%d 人病亡！医馆诊治可保百姓平安" % loss)
+		if plague_months_left <= 0:
+			_show_message("瘟疫终于消退了")
 	# 新事件概率：月均 4%
 	if randf() < 0.04 * _diff("events"):
 		_trigger_event()
@@ -729,10 +803,8 @@ func _trigger_event() -> void:
 		burning[cell] = 2
 		_show_message("%s起火了！两月后将被烧毁" % building_defs[buildings[cell]]["name"])
 	elif roll < 50:
-		if population > 0:
-			var loss: int = maxi(1, population / 20)
-			population -= loss
-			_show_message("瘟疫流行，%d 人病亡" % loss)
+		plague_months_left = 3
+		_show_message("瘟疫爆发！未来三月人口将持续病亡，速建医馆派郎中医治")
 	elif roll < 75:
 		var farms := 0
 		for b: String in buildings.values():
@@ -751,7 +823,7 @@ func _advance_month() -> void:
 	_assign_jobs()
 
 	# 生产链
-	var stock := {"grain": grain, "flour": flour, "food": food}
+	var stock := {"grain": grain, "flour": flour, "food": food, "wood": wood}
 	for cell: Vector2i in buildings:
 		var btype: String = buildings[cell]
 		var def: Dictionary = building_defs.get(btype, {})
@@ -763,6 +835,8 @@ func _advance_month() -> void:
 		if def.has("grain_per_month"):
 			var mult := 0.5 if locust_months_left > 0 else 1.0
 			stock["grain"] = float(stock["grain"]) + float(def["grain_per_month"]) * mult * eff
+		if def.has("wood_per_month"):
+			stock["wood"] = float(stock["wood"]) + float(def["wood_per_month"]) * eff
 		if def.has("convert_from"):
 			var use: float = minf(float(def["convert_rate"]) * eff, float(stock[def["convert_from"]]))
 			stock[def["convert_from"]] = float(stock[def["convert_from"]]) - use
@@ -770,6 +844,7 @@ func _advance_month() -> void:
 	grain = stock["grain"]
 	flour = stock["flour"]
 	food = stock["food"]
+	wood = stock["wood"]
 
 	# 居所与有效容量
 	var residence_keys: Array = []  # 民居格 或 大院锚点
@@ -1001,6 +1076,7 @@ func _chop_adjacent_tree(road_cell: Vector2i) -> void:
 		var nb := road_cell + dir
 		if trees.has(nb):
 			trees.erase(nb)
+			wood += 1.0  # 砍树得木材
 			queue_redraw()
 			return
 
@@ -1035,7 +1111,7 @@ func _refresh_info_panel() -> void:
 		var cap: int = ESTATE_CAP[tier]
 		lines.append("居住人口：%d / %d" % [_occupants(cap), cap])
 		lines.append("维护度：%d%%" % _cond_of(key))
-		lines.append("服务：%s　供水：%s" % [_yesno(_recently_serviced(key)), _yesno(_recently_watered(key))])
+		lines.append("服务：%s　供水：%s　诊治：%s" % [_yesno(_recently_serviced(key)), _yesno(_recently_watered(key)), _yesno(_recently_doctored(key))])
 		if tier == 2:
 			lines.append("升级进度：%d / %d 月" % [int(evolve_prog.get(key, 0)), EVOLVE_ESTATE])
 		show_repair = true
@@ -1046,7 +1122,7 @@ func _refresh_info_panel() -> void:
 			var cap2: int = HUT_CAP if btype == "hut" else TILEHOUSE_CAP
 			lines.append("居住人口：%d / %d" % [_occupants(cap2), cap2])
 			lines.append("维护度：%d%%" % _cond_of(key))
-			lines.append("服务：%s　供水：%s" % [_yesno(_recently_serviced(key)), _yesno(_recently_watered(key))])
+			lines.append("服务：%s　供水：%s　诊治：%s" % [_yesno(_recently_serviced(key)), _yesno(_recently_watered(key)), _yesno(_recently_doctored(key))])
 			if btype == "hut":
 				lines.append("升级进度：%d / %d 月" % [int(evolve_prog.get(key, 0)), EVOLVE_HUT])
 			else:
@@ -1062,8 +1138,14 @@ func _refresh_info_panel() -> void:
 			lines.append("维护度：%d%%" % _cond_of(key))
 			if def.has("grain_per_month"):
 				lines.append("粮产：每月 %d（需有人劳作）" % int(def["grain_per_month"]))
+			if def.has("wood_per_month"):
+				lines.append("木产：每月 %d（需有人劳作）" % int(def["wood_per_month"]))
 			if btype == "woodcutter":
-				lines.append("伐木工沿路巡行，免费砍除路边树木。")
+				lines.append("伐木工沿路巡行砍树，每棵 +1 木材。")
+			elif btype == "clinic":
+				lines.append("郎中沿路巡诊；诊治过的百姓瘟疫期减伤八成。")
+			elif btype == "repair":
+				lines.append("工匠沿路修缮：1 木材 +10%% 维护度，2 木材扑灭火灾。")
 		show_repair = btype != "road"
 	elif trees.has(cell):
 		_info_title.text = "树木"
@@ -1129,6 +1211,7 @@ func _build_state() -> Dictionary:
 		"grain": grain,
 		"flour": flour,
 		"food": food,
+		"wood": wood,
 		"gold": gold,
 		"year": year,
 		"month": month,
@@ -1138,6 +1221,7 @@ func _build_state() -> Dictionary:
 		"prestige": prestige,
 		"edict": edict,
 		"edict_counter": _edict_counter,
+		"plague": plague_months_left,
 		"buildings": list,
 		"estates": estate_list,
 		"trees": tree_list,
@@ -1150,6 +1234,7 @@ func _apply_state(state: Dictionary) -> void:
 	grain = float(state["grain"])
 	flour = float(state.get("flour", 0.0))
 	food = float(state.get("food", 20.0))
+	wood = float(state.get("wood", 0.0))
 	gold = float(state["gold"])
 	year = int(state["year"])
 	month = int(state["month"])
@@ -1164,12 +1249,14 @@ func _apply_state(state: Dictionary) -> void:
 	trees.clear()
 	serviced.clear()
 	watered.clear()
+	doctored.clear()
 	walkers.clear()
 	evolve_prog.clear()
 	burning.clear()
 	building_cond.clear()
 	employed.clear()
 	locust_months_left = 0
+	plague_months_left = int(state.get("plague", 0))
 	shortage_months = 0
 	for entry: Dictionary in state.get("conds", []):
 		building_cond[Vector2i(int(entry["x"]), int(entry["y"]))] = int(entry["cond"])
@@ -1257,6 +1344,8 @@ func _build_hud() -> void:
 	box.add_child(_flour_label)
 	_food_label = Label.new()
 	box.add_child(_food_label)
+	_wood_label = Label.new()
+	box.add_child(_wood_label)
 	_gold_label = Label.new()
 	box.add_child(_gold_label)
 	_econ_label = Label.new()
@@ -1397,6 +1486,7 @@ func _update_hud() -> void:
 	_grain_label.text = "粮食：%d" % int(grain)
 	_flour_label.text = "面粉：%d" % int(flour)
 	_food_label.text = "食品：%d" % int(food)
+	_wood_label.text = "木材：%d" % int(wood)
 	_gold_label.text = "金钱：%d" % int(gold)
 	_econ_label.text = "月税 %.1f − 维护 %.1f" % [last_tax_income, last_upkeep]
 	_prestige_label.text = "朝廷声望：%d" % prestige
@@ -1461,6 +1551,10 @@ func _draw() -> void:
 				tint = Color(0.62, 0.8, 0.98)  # 挑水夫：蓝色
 			elif wkind == 3:
 				tint = Color(0.55, 0.75, 0.45)  # 伐木工：草绿
+			elif wkind == 4:
+				tint = Color(0.85, 0.55, 0.75)  # 郎中：紫红
+			elif wkind == 5:
+				tint = Color(0.98, 0.82, 0.35)  # 工匠：藤黄
 			draw_texture(villager_tex, Vector2(-6, -18), tint)
 			draw_set_transform_matrix(Transform2D())
 			continue
