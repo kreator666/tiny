@@ -142,7 +142,12 @@ var _spawn_accum := 0.0
 var _rot := 0
 var _cam_pos := Vector2.ZERO
 var _zoom := Vector2.ONE
-var estate_y_off := -74  # 大宅立牌纵向偏移：实体基座与地块前边线对齐（同 1x1 建筑惯例）
+# 大宅立牌锚点偏移（按等级、旋转方向）：贴图实体基座近角对齐 2x2 地块前边线中点 +2px（同 1x1 建筑惯例）
+# 素材底部 y 与近角 x 逐图不一致（如 estate2_d2 整体偏高 8px），故逐图常量标定
+const ESTATE_GROUND_OFF := {
+	2: [Vector2(-48, -74), Vector2(-58, -75), Vector2(-47, -66), Vector2(-36, -75)],
+	3: [Vector2(-47, -73), Vector2(-39, -74), Vector2(-47, -74), Vector2(-56, -74)],
+}
 
 var _pop_label: Label
 var _grain_label: Label
@@ -1438,7 +1443,7 @@ func _draw() -> void:
 			var ebase: Vector2 = _proj() * (MAP_ORIGIN + Vector2(anchor + Vector2i(1, 2)) * CELL)
 			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, ebase))
 			var etex: Texture2D = estate_tex[tier][_rot]
-			draw_texture(etex, Vector2(-48, estate_y_off))
+			draw_texture(etex, ESTATE_GROUND_OFF[tier][_rot])
 			draw_set_transform_matrix(Transform2D())
 			continue
 		var cell: Vector2i = item[1]
