@@ -5,7 +5,11 @@ extends Node2D
 ##       立牌建筑带四方向贴图，随视角旋转切换；贴地 tile 随投影自动转向。
 ## 视角：滚轮缩放（以鼠标为中心）、中键拖拽平移、WASD/方向键平移、Q/E 旋转 90°。
 ## 核心玩法：
-##   生产链：农田 -> 粮食 -> 磨坊 -> 面粉 -> 市集 -> 食品 -> 民居。
+##   生产链：水稻田/麦田 -> 磨坊 -> 大米/面粉 -> 粮油店 -> 一级食品 -> 民居。
+##     大豆 -> 油坊 -> 豆油 ┐
+##     葡萄 -> 酒坊 -> 葡萄酒 ┴ 二级食品（宅院升级豪华大宅所需）。
+##     棉花 -> 织布坊 -> 布匹，连同豆油/葡萄酒由市集售卖换金钱。
+##     大米/面粉/豆油/葡萄酒各生产过一次后，商业解锁酒楼。
 ##   住房演进：茅屋(1格,4人) -> 瓦房(1格,8人) -> 宅院(2x2,32人) -> 豪华大宅(2x2,48人)。
 ##     条件：持续有行人服务 + 无饥荒；瓦房凑齐 2x2 空地自动合并为宅院。
 ##   建筑需邻接道路激活；行人（居民/挑夫/挑水夫/伐木工）沿路随机行走并服务相邻民居。
@@ -66,6 +70,17 @@ const DIFFICULTY := {
 static var boot_mode := "new"
 static var boot_slot := 1
 static var difficulty := "normal"  # 由主菜单写入
+# DEBUG 模式（仅开发者）：用命令行参数启动（见 tools/run_debug.bat），最终用户双击 exe 不会携带参数。
+# 该模式下各项数值只增不减：资源不消耗、人口不流失、维护不衰减、火灾不损毁、建造修缮免费，并禁止存档。
+static var debug_mode := false
+
+
+static func detect_debug_mode() -> void:
+	## 识别开发者命令行参数：xinsong-zhisuo.exe -- --debug
+	for arg: String in OS.get_cmdline_user_args() + OS.get_cmdline_args():
+		if arg == "--debug":
+			debug_mode = true
+			return
 
 # 贴图运行时加载（素材包切换见 AssetLib；严禁在 _draw 中 load）
 var ground_tex: Array = []  # [ground_0, ground_1]
@@ -106,14 +121,27 @@ var evolve_prog: Dictionary = {}  # 居所 -> 连续达标月数
 var population := 0
 var pop_capacity := 0
 var shortage_months := 0  # 连续断粮月数：满 3 个月才开始流失人口
-var grain := 100.0
-var flour := 0.0
-var food := 20.0
+# 资源：五种作物 -> 加工品 -> 食品（货品价格见 buildings.json 的 sells）
+var paddy := 60.0  # 水稻
+var wheat := 0.0  # 小麦
+var cotton := 0.0  # 棉花
+var soy := 0.0  # 大豆
+var grape := 0.0  # 葡萄
+var rice := 0.0  # 大米（磨坊出品，一级食品原料）
+var flour := 0.0  # 面粉（磨坊出品，一级食品原料）
+var oil := 0.0  # 豆油（油坊出品，二级食品）
+var wine := 0.0  # 葡萄酒（酒坊出品，二级食品）
+var cloth := 0.0  # 布匹（织布坊出品，市集售卖）
+var food := 20.0  # 一级食品（粮油店出品，供百姓食用）
 var wood := 0.0  # 木材：伐木屋产出，维修站修缮消耗
 var gold := 10000.0
 var year := 1
 var month := 1
 var _months_total := 0
+
+# 酒楼解锁：大米/面粉/豆油/葡萄酒 各生产过一次后点亮
+var foods_produced := {"rice": false, "flour": false, "oil": false, "wine": false}
+var restaurant_unlocked := false
 
 # 朝廷与财政
 var prestige := 0  # 声望：诏令达成 +1，失败 -1
@@ -156,11 +184,19 @@ const ESTATE_GROUND_OFF := {
 # 建造菜单分类（法老王式）：一级为分类方块 + 道路/拆除，二级为分类内建筑
 const BUILD_MENU := {
 	"住宅": ["hut"],
-	"农业": ["farm", "mill"],
-	"商业": ["market"],
+	"农业": ["farm", "wheat", "cotton", "soy", "grape", "mill"],
+	"商业": ["grocer", "market", "winery", "oilpress", "restaurant"],
 	"市政": ["well", "clinic", "repair"],
-	"工业": ["woodcutter"],
+	"工业": ["woodcutter", "loom"],
 }
+
+const CROP_NAMES := {"paddy": "水稻", "wheat": "小麦", "cotton": "棉花", "soy": "大豆", "grape": "葡萄"}
+const GOODS_NAMES := {"rice": "大米", "flour": "面粉", "oil": "豆油", "wine": "葡萄酒",
+	"cloth": "布匹", "food": "一级食品", "wood": "木材", "gold": "金钱"}
+
+
+func _res_name(key: String) -> String:
+	return CROP_NAMES.get(key, GOODS_NAMES.get(key, key))
 
 var _pop_label: Label
 var _grain_label: Label
@@ -177,6 +213,7 @@ var _edict_label: Label
 var _econ_label: Label
 var _tool_buttons := {}
 var _menu_box: VBoxContainer  # 建造菜单容器（两级：分类 -> 建筑）
+var _menu_cat := ""  # 当前二级菜单分类名（空 = 一级分类页）
 var _active_slot := 1
 var _slot_btn: Button
 var _minimap: Minimap
@@ -215,6 +252,8 @@ func _ready() -> void:
 				_show_message("已读取存档槽 %d（第 %d 年 %d 月）" % [boot_slot, year, month])
 	boot_mode = "new"
 	_update_slot_btn()
+	if debug_mode:
+		_show_message("DEBUG 模式：各项数值只增不减，禁止存档")
 
 
 func _load_building_defs() -> void:
@@ -454,23 +493,26 @@ func _doctor_around(road_cell: Vector2i) -> void:
 
 
 func _repair_around(road_cell: Vector2i) -> void:
-	# 工匠为邻路建筑恢复维护度（1 木材 +10），并扑灭火灾（2 木材）
+	# 工匠为邻路建筑恢复维护度（1 木材 +10），并扑灭火灾（2 木材）；DEBUG 不耗木材
 	for dir: Vector2i in DIRS:
 		var nb := road_cell + dir
 		if burning.has(nb):
-			if wood >= 2.0:
-				wood -= 2.0
+			if debug_mode or wood >= 2.0:
+				if not debug_mode:
+					wood -= 2.0
 				burning.erase(nb)
 				_show_message("工匠扑灭了一场火灾！")
 			continue
 		if buildings.has(nb) and buildings[nb] != "road":
-			if building_cond.get(nb, 100) < 100 and wood >= 1.0:
-				wood -= 1.0
+			if building_cond.get(nb, 100) < 100 and (debug_mode or wood >= 1.0):
+				if not debug_mode:
+					wood -= 1.0
 				building_cond[nb] = mini(100, _cond_of(nb) + 10)
 			continue
 		var anchor := _estate_anchor_at(nb)
-		if anchor != Vector2i(-1, -1) and building_cond.get(anchor, 100) < 100 and wood >= 1.0:
-			wood -= 1.0
+		if anchor != Vector2i(-1, -1) and building_cond.get(anchor, 100) < 100 and (debug_mode or wood >= 1.0):
+			if not debug_mode:
+				wood -= 1.0
 			building_cond[anchor] = mini(100, _cond_of(anchor) + 10)
 
 
@@ -563,10 +605,14 @@ func _try_place(cell: Vector2i) -> void:
 		_show_message("这里已被占用")
 		return
 	var def: Dictionary = building_defs[selected_tool]
+	if bool(def.get("locked", false)) and not restaurant_unlocked:
+		_show_message("酒楼尚未解锁：需生产过 大米、面粉、豆油、葡萄酒 四种食品")
+		return
 	if gold < int(def["cost_gold"]):
 		_show_message("金钱不足")
 		return
-	gold -= int(def["cost_gold"])
+	if not debug_mode:
+		gold -= int(def["cost_gold"])
 	buildings[cell] = selected_tool
 	_refresh_capacity()
 	_show_message("建造了 %s" % def["name"])
@@ -596,12 +642,13 @@ func _try_demolish(cell: Vector2i) -> void:
 		_show_message("拆除了 %s，返还 %d 金" % [building_defs[btype]["name"], refund])
 	elif trees.has(cell):
 		const TREE_COST := 10
-		if gold < TREE_COST:
+		if not debug_mode and gold < TREE_COST:
 			_show_message("金钱不足（砍树需 %d 金，或建伐木屋免费砍伐）" % TREE_COST)
 			return
-		gold -= TREE_COST
+		if not debug_mode:
+			gold -= TREE_COST
 		trees.erase(cell)
-		_show_message("砍除了一棵树（%d 金）" % TREE_COST)
+		_show_message("砍除了一棵树（%d 金）" % (0 if debug_mode else TREE_COST))
 	else:
 		_show_message("这里没有可拆除的建筑")
 		return
@@ -732,11 +779,11 @@ func _resolve_edict() -> void:
 	match kind:
 		"tax":
 			ok = gold >= target
-			if ok:
+			if ok and not debug_mode:
 				gold -= target
 		"tribute":
 			ok = food >= target
-			if ok:
+			if ok and not debug_mode:
 				food -= target
 		"population":
 			ok = population >= target
@@ -749,8 +796,9 @@ func _resolve_edict() -> void:
 		_show_message("诏令达成，朝廷嘉奖！声望 +1")
 		Sound.play("coin")
 	else:
-		prestige -= 1
-		_show_message("诏令未达成，朝廷震怒！声望 -1")
+		if not debug_mode:
+			prestige -= 1
+		_show_message("诏令未达成，朝廷震怒！声望 %s" % ("不变（DEBUG）" if debug_mode else "-1"))
 		Sound.play("warn")
 	edict = {}
 	_issue_edict()
@@ -759,11 +807,13 @@ func _resolve_edict() -> void:
 # ---------- 灾害与事件 ----------
 
 func _events_month() -> void:
-	# 火灾倒计时
+	# 火灾倒计时（DEBUG：火灾自行熄灭，不烧毁建筑）
 	for cell: Vector2i in burning.keys():
 		burning[cell] = int(burning[cell]) - 1
 		if int(burning[cell]) <= 0:
 			burning.erase(cell)
+			if debug_mode:
+				continue
 			var btype: String = buildings.get(cell, "")
 			if not btype.is_empty():
 				buildings.erase(cell)
@@ -788,7 +838,8 @@ func _events_month() -> void:
 					covered += _capacity_of(anchor)
 			var coverage := minf(1.0, float(covered) / maxf(1.0, float(pop_capacity)))
 			var loss: int = maxi(1, int(round(population * 0.12 * (1.0 - coverage * 0.85))))
-			population = maxi(0, population - loss)
+			if not debug_mode:
+				population = maxi(0, population - loss)
 			if coverage >= 0.99:
 				_show_message("瘟疫流行，所幸医馆诊治及时，仅 %d 人病亡" % loss)
 			else:
@@ -816,24 +867,57 @@ func _trigger_event() -> void:
 		plague_months_left = 3
 		_show_message("瘟疫爆发！未来三月人口将持续病亡，速建医馆派郎中医治")
 	elif roll < 75:
-		var farms := 0
+		# 风调雨顺：五种作物田各丰收 +10
+		var gained: Array = []
 		for b: String in buildings.values():
-			if b == "farm":
-				farms += 1
-		var bonus := farms * 20
-		grain += bonus
-		_show_message("风调雨顺，农田丰收！粮食 +%d" % bonus)
+			var bdef: Dictionary = building_defs.get(b, {})
+			if bdef.has("crop"):
+				var crop: String = bdef["crop"]
+				set(crop, float(get(crop)) + 10.0)
+				gained.append(CROP_NAMES[crop])
+		if gained.is_empty():
+			return
+		_show_message("风调雨顺，%s丰收！" % "、".join(gained))
 	else:
 		locust_months_left = 6
 		_show_message("蝗灾来袭！六个月内农田减产一半")
+
+
+func _note_produced(item: String, amount: float) -> void:
+	## 记录四种食品的首产，集齐后解锁酒楼
+	if amount <= 0.0 or not foods_produced.has(item) or foods_produced[item]:
+		return
+	foods_produced[item] = true
+	if restaurant_unlocked:
+		return
+	for done: bool in foods_produced.values():
+		if not done:
+			return
+	restaurant_unlocked = true
+	_show_message("四种食品齐备（大米、面粉、豆油、葡萄酒），商业解锁酒楼！")
+	Sound.play("evolve")
+	# 建造菜单里的酒楼按钮由置灰转为可点：重建当前菜单视图
+	if _menu_box:
+		if _menu_cat.is_empty():
+			_show_build_menu_root()
+		else:
+			_show_build_menu_category(_menu_cat)
 
 
 func _advance_month() -> void:
 	_months_total += 1
 	_assign_jobs()
 
-	# 生产链
-	var stock := {"grain": grain, "flour": flour, "food": food, "wood": wood}
+	# 生产链：作物 -> 加工（磨坊/油坊/酒坊/织布坊）-> 粮油店/市集/酒楼
+	var stock := {
+		"paddy": paddy, "wheat": wheat, "cotton": cotton, "soy": soy, "grape": grape,
+		"rice": rice, "flour": flour, "oil": oil, "wine": wine, "cloth": cloth,
+		"food": food, "wood": wood, "gold": gold,
+	}
+	# DEBUG 模式：记录月初库存下限，月末任何资源跌破月初值都会被抬回（只增不减）
+	var stock_floor := {}
+	for k: String in stock:
+		stock_floor[k] = stock[k]
 	for cell: Vector2i in buildings:
 		var btype: String = buildings[cell]
 		var def: Dictionary = building_defs.get(btype, {})
@@ -842,19 +926,52 @@ func _advance_month() -> void:
 		var eff := _work_efficiency(cell, def)
 		if eff <= 0.0:
 			continue
-		if def.has("grain_per_month"):
+		if def.has("crop"):
 			var mult := 0.5 if locust_months_left > 0 else 1.0
-			stock["grain"] = float(stock["grain"]) + float(def["grain_per_month"]) * mult * eff
+			stock[def["crop"]] = float(stock[def["crop"]]) + float(def["crop_per_month"]) * mult * eff
 		if def.has("wood_per_month"):
 			stock["wood"] = float(stock["wood"]) + float(def["wood_per_month"]) * eff
-		if def.has("convert_from"):
-			var use: float = minf(float(def["convert_rate"]) * eff, float(stock[def["convert_from"]]))
-			stock[def["convert_from"]] = float(stock[def["convert_from"]]) - use
-			stock[def["convert_to"]] = float(stock[def["convert_to"]]) + use
-	grain = stock["grain"]
+		for cv: Dictionary in def.get("converts", []):
+			var use: float = minf(float(cv["rate"]) * eff, float(stock[cv["from"]]))
+			if use > 0.0:
+				stock[cv["from"]] = float(stock[cv["from"]]) - use
+				stock[cv["to"]] = float(stock[cv["to"]]) + use
+				_note_produced(str(cv["to"]), use)
+		if def.has("sells"):
+			# 市集：按 葡萄酒->豆油->布匹 顺序售卖，每月限量 sell_rate 件
+			var quota: float = float(def["sell_rate"]) * eff
+			for item: String in def["sells"]:
+				var n: float = minf(quota, float(stock[item]))
+				if n <= 0.0:
+					continue
+				stock[item] = float(stock[item]) - n
+				stock["gold"] = float(stock["gold"]) + n * float(def["sells"][item])
+				quota -= n
+		if def.has("consumes"):
+			# 酒楼：四种食品都够才开张，按缺料比例折减产出
+			var ratio := 1.0
+			for item: String in def["consumes"]:
+				ratio = minf(ratio, float(stock[item]) / (float(def["consumes"][item]) * eff))
+			if ratio > 0.0:
+				for item: String in def["consumes"]:
+					stock[item] = float(stock[item]) - float(def["consumes"][item]) * eff * ratio
+				stock["gold"] = float(stock["gold"]) + float(def["income"]) * eff * ratio
+	paddy = stock["paddy"]
+	wheat = stock["wheat"]
+	cotton = stock["cotton"]
+	soy = stock["soy"]
+	grape = stock["grape"]
+	rice = stock["rice"]
 	flour = stock["flour"]
+	oil = stock["oil"]
+	wine = stock["wine"]
+	cloth = stock["cloth"]
 	food = stock["food"]
 	wood = stock["wood"]
+	gold = stock["gold"]
+	if debug_mode:
+		for k: String in stock_floor:
+			set(k, maxf(float(get(k)), float(stock_floor[k])))
 
 	# 居所与有效容量
 	var residence_keys: Array = []  # 民居格 或 大院锚点
@@ -870,7 +987,15 @@ func _advance_month() -> void:
 	# 人口吃食品与移民迁入：有余房+有饭吃就稳定流入，连续断粮 3 个月才流失
 	var fed := false
 	var consumption: int = int(ceil(population * _diff("food_use")))
-	if food >= consumption:
+	if debug_mode:
+		# DEBUG：百姓永不挨饿、人口只增不减
+		fed = true
+		shortage_months = 0
+		if population < eff_capacity:
+			var vacancy2 := eff_capacity - population
+			var influx2 := maxi(2, int(ceil(vacancy2 * 0.25 * _diff("growth"))))
+			population = mini(eff_capacity, population + influx2)
+	elif food >= consumption:
 		food -= consumption
 		fed = true
 		shortage_months = 0
@@ -882,8 +1007,10 @@ func _advance_month() -> void:
 		food = 0.0
 		shortage_months += 1
 		if shortage_months <= 3:
-			if grain > 0 or flour > 0:
-				_show_message("有粮无食！磨坊、市集产能跟不上，百姓已在挨饿")
+			if rice > 0 or flour > 0:
+				_show_message("有米面无食！粮油店产能跟不上，百姓已在挨饿")
+			elif paddy > 0 or wheat > 0:
+				_show_message("有粮无米面！磨坊产能跟不上，百姓已在挨饿")
 			else:
 				_show_message("存粮不足，百姓已在挨饿（连续断粮三月将致人口流失）")
 		else:
@@ -894,8 +1021,9 @@ func _advance_month() -> void:
 	# 住房演进（需吃饱 + 有服务）
 	_evolve_housing(fed)
 
-	# 财政与朝廷
-	gold += _economy_month()
+	# 财政与朝廷（DEBUG：净收入为负时不扣钱，只增不减）
+	var net := _economy_month()
+	gold += maxf(0.0, net) if debug_mode else net
 	if edict.is_empty():
 		_issue_edict()
 	elif _months_total >= int(edict["deadline"]):
@@ -904,21 +1032,22 @@ func _advance_month() -> void:
 	# 灾害与事件
 	_events_month()
 
-	# 维护度自然损耗（道路不衰减；大院慢一点）；难度越高损耗越快
-	var cond_decay := maxi(1, int(round(2 * _diff("cond"))))
-	for cell: Vector2i in buildings:
-		if buildings[cell] != "road":
-			building_cond[cell] = maxi(0, _cond_of(cell) - cond_decay)
-	for anchor: Vector2i in estates:
-		building_cond[anchor] = maxi(0, _cond_of(anchor) - maxi(1, cond_decay / 2))
+	# 维护度自然损耗（道路不衰减；大院慢一点）；难度越高损耗越快（DEBUG：不衰减）
+	if not debug_mode:
+		var cond_decay := maxi(1, int(round(2 * _diff("cond"))))
+		for cell: Vector2i in buildings:
+			if buildings[cell] != "road":
+				building_cond[cell] = maxi(0, _cond_of(cell) - cond_decay)
+		for anchor: Vector2i in estates:
+			building_cond[anchor] = maxi(0, _cond_of(anchor) - maxi(1, cond_decay / 2))
 
 	month += 1
 	if month > 12:
 		month = 1
 		year += 1
 
-	# 每年自动保存一次（静默）
-	if _months_total % 12 == 0:
+	# 每年自动保存一次（静默；DEBUG 模式禁止存档）
+	if _months_total % 12 == 0 and not debug_mode:
 		SaveManager.save_auto(_build_state())
 
 	_update_hud()
@@ -951,11 +1080,11 @@ func _evolve_housing(fed: bool) -> void:
 		else:
 			evolve_prog[cell] = int(evolve_prog.get(cell, 0)) / 2  # 断档减半，不清零
 
-	# 宅院 -> 豪华大宅
+	# 宅院 -> 豪华大宅（每月还需消耗 1 份二级食品：葡萄酒或豆油）
 	for anchor: Vector2i in estates.keys():
 		if estates[anchor] != 2:
 			continue
-		if fed and _recently_serviced(anchor):
+		if fed and _recently_serviced(anchor) and _consume_luxury():
 			evolve_prog[anchor] = int(evolve_prog.get(anchor, 0)) + 1
 			if evolve_prog[anchor] >= EVOLVE_ESTATE:
 				estates[anchor] = 3
@@ -964,6 +1093,19 @@ func _evolve_housing(fed: bool) -> void:
 				Sound.play("evolve")
 		else:
 			evolve_prog[anchor] = int(evolve_prog.get(anchor, 0)) / 2  # 断档减半，不清零
+
+
+func _consume_luxury() -> bool:
+	## 消耗 1 份二级食品（优先葡萄酒），供宅院升级豪华大宅；DEBUG 只验库存不扣减
+	if debug_mode:
+		return wine >= 1.0 or oil >= 1.0
+	if wine >= 1.0:
+		wine -= 1.0
+		return true
+	if oil >= 1.0:
+		oil -= 1.0
+		return true
+	return false
 
 
 func _try_merge_estate(cell: Vector2i) -> bool:
@@ -1013,7 +1155,8 @@ func _refresh_capacity() -> void:
 	for tier: int in estates.values():
 		cap += int(ESTATE_CAP[tier])
 	pop_capacity = cap
-	population = mini(population, pop_capacity)  # 拆除后人口不超过容量
+	if not debug_mode:
+		population = mini(population, pop_capacity)  # 拆除后人口不超过容量（DEBUG 不削人口）
 
 
 # ---------- 劳动 / 维护 / 查看 ----------
@@ -1124,6 +1267,7 @@ func _refresh_info_panel() -> void:
 		lines.append("服务：%s　供水：%s　诊治：%s" % [_yesno(_recently_serviced(key)), _yesno(_recently_watered(key)), _yesno(_recently_doctored(key))])
 		if tier == 2:
 			lines.append("升级进度：%d / %d 月" % [int(evolve_prog.get(key, 0)), EVOLVE_ESTATE])
+			lines.append("二级食品：葡萄酒 %d ｜ 豆油 %d（升级每月消耗 1）" % [int(wine), int(oil)])
 		show_repair = true
 	elif buildings.has(cell):
 		var btype: String = buildings[cell]
@@ -1146,8 +1290,23 @@ func _refresh_info_panel() -> void:
 				var on := int(employed.get(key, 0))
 				lines.append("岗位：%d　在岗：%d（效率 %d%%）" % [jobs, on, int(_work_efficiency(key, def) * 100)])
 			lines.append("维护度：%d%%" % _cond_of(key))
-			if def.has("grain_per_month"):
-				lines.append("粮产：每月 %d（需有人劳作）" % int(def["grain_per_month"]))
+			if def.has("crop"):
+				lines.append("产出：每月 %d %s（需有人劳作）" % [int(def["crop_per_month"]), CROP_NAMES[def["crop"]]])
+			if def.has("converts"):
+				var parts: Array = []
+				for cv: Dictionary in def["converts"]:
+					parts.append("%s→%s %d" % [_res_name(cv["from"]), _res_name(cv["to"]), int(cv["rate"])])
+				lines.append("加工：%s /月" % "，".join(parts))
+			if def.has("sells"):
+				var parts2: Array = []
+				for item: String in def["sells"]:
+					parts2.append("%s %d金" % [_res_name(item), int(def["sells"][item])])
+				lines.append("售卖：%s，每月至多 %d 件" % ["、".join(parts2), int(def["sell_rate"])])
+			if def.has("consumes"):
+				var parts3: Array = []
+				for item: String in def["consumes"]:
+					parts3.append("%s×%d" % [_res_name(item), int(def["consumes"][item])])
+				lines.append("消耗：%s /月 → 产出 %d 金" % ["、".join(parts3), int(def["income"])])
 			if def.has("wood_per_month"):
 				lines.append("木产：每月 %d（需有人劳作）" % int(def["wood_per_month"]))
 			if btype == "woodcutter":
@@ -1186,7 +1345,8 @@ func _on_repair_pressed() -> void:
 	var cost := _repair_cost(key, base)
 	if _cond_of(key) >= 100 or gold < cost:
 		return
-	gold -= cost
+	if not debug_mode:
+		gold -= cost
 	building_cond[key] = 100
 	_show_message("修缮完成")
 	Sound.play("coin")
@@ -1218,11 +1378,20 @@ func _build_state() -> Dictionary:
 		cond_list.append({"x": key.x, "y": key.y, "cond": building_cond[key]})
 	return {
 		"population": population,
-		"grain": grain,
+		"paddy": paddy,
+		"wheat": wheat,
+		"cotton": cotton,
+		"soy": soy,
+		"grape": grape,
+		"rice": rice,
 		"flour": flour,
+		"oil": oil,
+		"wine": wine,
+		"cloth": cloth,
 		"food": food,
 		"wood": wood,
 		"gold": gold,
+		"foods_produced": foods_produced,
 		"year": year,
 		"month": month,
 		"months_total": _months_total,
@@ -1241,11 +1410,24 @@ func _build_state() -> Dictionary:
 
 func _apply_state(state: Dictionary) -> void:
 	population = int(state["population"])
-	grain = float(state["grain"])
+	# 旧档只有 grain（粮食）：折算为水稻，其余作物从零开始
+	paddy = float(state.get("paddy", state.get("grain", 0.0)))
+	wheat = float(state.get("wheat", 0.0))
+	cotton = float(state.get("cotton", 0.0))
+	soy = float(state.get("soy", 0.0))
+	grape = float(state.get("grape", 0.0))
+	rice = float(state.get("rice", 0.0))
 	flour = float(state.get("flour", 0.0))
+	oil = float(state.get("oil", 0.0))
+	wine = float(state.get("wine", 0.0))
+	cloth = float(state.get("cloth", 0.0))
 	food = float(state.get("food", 20.0))
 	wood = float(state.get("wood", 0.0))
 	gold = float(state["gold"])
+	foods_produced = {"rice": false, "flour": false, "oil": false, "wine": false}
+	for k: String in foods_produced:
+		foods_produced[k] = bool(state.get("foods_produced", {}).get(k, false))
+	restaurant_unlocked = foods_produced.values().all(func(done: bool) -> bool: return done)
 	year = int(state["year"])
 	month = int(state["month"])
 	_months_total = int(state.get("months_total", (year - 1) * 12 + month))
@@ -1288,6 +1470,9 @@ func _apply_state(state: Dictionary) -> void:
 
 
 func _on_save_pressed() -> void:
+	if debug_mode:
+		_show_message("DEBUG 模式已禁止存档（防止污染存档位）")
+		return
 	var err := SaveManager.save_slot(_active_slot, _build_state())
 	_update_slot_btn()
 	_show_message("已保存到存档槽 %d" % _active_slot if err == OK else "保存失败")
@@ -1395,6 +1580,14 @@ func _build_hud() -> void:
 	help_label.text = "滚轮缩放 | 中键/WASD平移 | Q/E旋转"
 	help_label.modulate = Color(0.75, 0.75, 0.75)
 	top_row.add_child(help_label)
+
+	if debug_mode:
+		# DEBUG 模式常驻红标，提醒开发者当前数值只增不减、存档已禁用
+		var debug_label := Label.new()
+		debug_label.text = "DEBUG"
+		debug_label.add_theme_font_size_override("font_size", 18)
+		debug_label.modulate = Color(1.0, 0.35, 0.3)
+		top_row.add_child(debug_label)
 
 	_minimap = Minimap.new()
 	_minimap.main = self
@@ -1562,6 +1755,7 @@ func _on_category_pressed(cat: String) -> void:
 
 
 func _show_build_menu_root() -> void:
+	_menu_cat = ""
 	_clear_build_menu()
 	var grid := GridContainer.new()
 	grid.columns = 3
@@ -1588,6 +1782,7 @@ func _show_build_menu_root() -> void:
 
 
 func _show_build_menu_category(cat: String) -> void:
+	_menu_cat = cat
 	_clear_build_menu()
 	var back := Button.new()
 	back.text = "← 返回"
@@ -1602,6 +1797,10 @@ func _show_build_menu_category(cat: String) -> void:
 		var def: Dictionary = building_defs[btype]
 		var btn := _make_square_btn(_menu_icon(btype), def["name"])
 		btn.tooltip_text = "%s\n造价 %d 金" % [def["desc"], int(def["cost_gold"])]
+		if bool(def.get("locked", false)) and not restaurant_unlocked:
+			# 酒楼：四种食品各生产过一次前保持置灰
+			btn.disabled = true
+			btn.tooltip_text = "尚未解锁：需生产过 大米、面粉、豆油、葡萄酒 四种食品"
 		btn.toggle_mode = true
 		btn.pressed.connect(_on_tool_selected.bind(btype))
 		grid.add_child(btn)
@@ -1626,8 +1825,10 @@ func _on_tool_selected(type: String) -> void:
 func _update_hud() -> void:
 	_date_label.text = "第 %d 年 %d 月 · %s" % [year, month, _diff_name()]
 	_pop_label.text = "人口：%d / %d（就业 %d/%d）" % [population, pop_capacity, jobs_filled, jobs_total]
-	_grain_label.text = "粮食：%d" % int(grain)
-	_flour_label.text = "面粉：%d" % int(flour)
+	_grain_label.text = "作物：稻 %d ｜ 麦 %d ｜ 棉 %d ｜ 豆 %d ｜ 葡 %d" % [
+		int(paddy), int(wheat), int(cotton), int(soy), int(grape)]
+	_flour_label.text = "货品：米 %d ｜ 面 %d ｜ 油 %d ｜ 酒 %d ｜ 布 %d" % [
+		int(rice), int(flour), int(oil), int(wine), int(cloth)]
 	_food_label.text = "食品：%d" % int(food)
 	_wood_label.text = "木材：%d" % int(wood)
 	_gold_label.text = "金钱：%d" % int(gold)

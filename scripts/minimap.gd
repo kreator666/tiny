@@ -42,8 +42,8 @@ func _draw() -> void:
 		var col := Color(0.35, 0.5, 0.75)  # 一般建筑：蓝
 		if btype == "hut" or btype == "tilehouse":
 			col = Color(0.72, 0.6, 0.42)  # 民居：土黄
-		elif float(main.building_defs.get(btype, {}).get("grain_per_month", 0.0)) > 0.0:
-			col = Color(0.85, 0.75, 0.3)  # 农田：金黄
+		elif main.building_defs.get(btype, {}).has("crop"):
+			col = Color(0.85, 0.75, 0.3)  # 作物田：金黄
 		if main.burning.has(cell):
 			col = Color(0.9, 0.25, 0.15)  # 火灾：红
 		draw_rect(Rect2(cell.x * sx, cell.y * sy, sx, sy), col)

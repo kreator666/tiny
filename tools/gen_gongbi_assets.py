@@ -377,6 +377,170 @@ for i, gate in enumerate(GATES):
     save(paint_estate(3, gate), f"estate3_d{i}.png")
 
 
+# ---------- 新作物田（32x32 贴地，仿 farm.png 肌理） ----------
+def paint_field(kind):
+    img = paper(32)
+    d = ImageDraw.Draw(img, "RGBA")
+    d.rectangle([0, 0, 31, 31], fill=SOIL + (90,))
+    for y in range(2, 32, 4):
+        d.line([(0, y), (31, y)], fill=(96, 70, 44, 70), width=1)
+    img = img.filter(ImageFilter.GaussianBlur(0.4))
+    d = ImageDraw.Draw(img, "RGBA")
+    if kind == "wheat":  # 麦：金黄麦秆
+        for _ in range(26):
+            x, y = rng.randint(1, 30), rng.randint(1, 30)
+            d.line([(x, y), (x + rng.randint(-1, 1), y - 3)], fill=(214, 178, 90, 230), width=1)
+            d.point([(x, y - 3)], fill=(236, 206, 128, 240))
+    elif kind == "cotton":  # 棉：绿秆白桃
+        for _ in range(16):
+            x, y = rng.randint(2, 29), rng.randint(2, 29)
+            d.line([(x, y), (x, y - 2)], fill=GREEN_DARK + (220,), width=1)
+            d.ellipse([x - 2, y - 5, x + 2, y - 1], fill=(238, 236, 226, 235), outline=INK)
+    elif kind == "soy":  # 豆：矮绿丛黄豆荚
+        for _ in range(24):
+            x, y = rng.randint(1, 30), rng.randint(1, 30)
+            d.line([(x, y), (x, y - 2)], fill=GREEN + (220,), width=1)
+            d.point([(x - 1, y - 1)], fill=(206, 198, 110, 240))
+            d.point([(x + 1, y)], fill=(188, 182, 96, 220))
+    elif kind == "grape":  # 葡萄：深绿藤架紫果
+        for _ in range(14):
+            x, y = rng.randint(2, 29), rng.randint(2, 29)
+            d.line([(x, y), (x, y - 3)], fill=GREEN_DARK + (230,), width=1)
+            d.ellipse([x - 1, y - 2, x + 3, y + 1], fill=(96, 62, 108, 235), outline=INK)
+    return img
+
+
+for kind in ("wheat", "cotton", "soy", "grape"):
+    save(paint_field(kind), f"{kind}.png")
+
+
+# ---------- 新商业/工业建筑（立牌 4 方向） ----------
+def paint_winery(door, flag_side):
+    S = 64
+    img = canvas(S, S, [6, 48, 58, 58])
+    d = ImageDraw.Draw(img)
+    d.rectangle([12, 30, 50, 50], fill=(238, 230, 210), outline=INK)
+    d.polygon([(4, 30), (20, 15), (42, 15), (58, 30)], fill=ROOF)
+    d.line([(4, 30), (20, 15), (42, 15), (58, 30), (4, 30)], fill=INK)
+    if door is not None:
+        dx = {"c": 26, "l": 16, "r": 36}[door]
+        d.rectangle([dx, 38, dx + 8, 50], fill=WOOD, outline=INK)
+    # 酒坛：赭红酒瓮 + 泥封
+    jx = 44 if flag_side != "l" else 6
+    d.ellipse([jx, 40, jx + 14, 54], fill=(146, 74, 56), outline=INK)
+    d.ellipse([jx + 4, 38, jx + 10, 44], fill=(170, 96, 70), outline=INK)
+    if flag_side is not None:
+        fx = 56 if flag_side == "r" else 8
+        d.line([(fx, 46), (fx, 12)], fill=INK, width=2)
+        bx0, bx1 = (fx, fx + 7) if flag_side == "r" else (fx - 7, fx)
+        d.polygon([(bx0, 12), (bx1, 14), (bx1, 28), (bx0, 26)], fill=(150, 44, 40))
+        d.ellipse([(bx0 + bx1) // 2 - 2, 17, (bx0 + bx1) // 2 + 2, 22], fill=(238, 232, 220))
+    return img.resize((32, 32), Image.LANCZOS)
+
+
+def paint_oilpress(door, jar_side):
+    S = 64
+    img = canvas(S, S, [6, 48, 58, 58])
+    d = ImageDraw.Draw(img)
+    d.rectangle([12, 30, 50, 50], fill=(238, 230, 210), outline=INK)
+    d.polygon([(4, 30), (20, 15), (42, 15), (58, 30)], fill=THATCH)
+    d.line([(4, 30), (20, 15), (42, 15), (58, 30), (4, 30)], fill=INK)
+    if door is not None:
+        dx = {"c": 26, "l": 16, "r": 36}[door]
+        d.rectangle([dx, 38, dx + 8, 50], fill=WOOD, outline=INK)
+    # 榨油架：立柱 + 压梁 + 油瓶
+    px = 46 if jar_side != "l" else 4
+    d.line([(px, 52), (px, 34)], fill=INK, width=3)
+    d.line([(px, 34), (px + 10, 34)], fill=INK, width=3)
+    d.line([(px + 10, 34), (px + 10, 42)], fill=INK, width=2)
+    d.ellipse([px + 5, 44, px + 13, 52], fill=(120, 96, 54), outline=INK)
+    d.line([(px + 9, 42), (px + 9, 44)], fill=(120, 96, 54), width=2)
+    return img.resize((32, 32), Image.LANCZOS)
+
+
+def paint_loom(door, rack_side):
+    S = 64
+    img = canvas(S, S, [8, 50, 56, 60])
+    d = ImageDraw.Draw(img)
+    d.rectangle([14, 34, 50, 52], fill=WALL, outline=INK)
+    d.polygon([(6, 34), (20, 20), (44, 20), (58, 34)], fill=ROOF)
+    d.line([(6, 34), (20, 20), (44, 20), (58, 34), (6, 34)], fill=INK)
+    if door is not None:
+        dx = {"c": 28, "l": 16, "r": 36}[door]
+        d.rectangle([dx, 40, dx + 8, 52], fill=WOOD, outline=INK)
+    # 布架：两柱间挂两匹彩布
+    if rack_side is not None:
+        rx = 42 if rack_side == "r" else 4
+        d.line([(rx, 52), (rx, 28)], fill=INK, width=2)
+        d.line([(rx + 14, 52), (rx + 14, 28)], fill=INK, width=2)
+        d.rectangle([rx, 30, rx + 6, 46], fill=(172, 62, 52), outline=INK)
+        d.rectangle([rx + 8, 30, rx + 14, 46], fill=(96, 108, 122), outline=INK)
+    return img.resize((32, 32), Image.LANCZOS)
+
+
+def paint_grocer(door, sack_side):
+    S = 64
+    img = canvas(S, S, [6, 48, 58, 58])
+    d = ImageDraw.Draw(img)
+    for px in (14, 46):
+        d.line([(px, 24), (px, 46)], fill=INK, width=3)
+    d.polygon([(8, 24), (52, 24), (48, 16), (12, 16)], fill=(238, 232, 220))
+    for sx in range(10, 52, 7):
+        d.line([(sx, 16), (sx - 2, 24)], fill=(146, 94, 62), width=3)
+    d.line([(8, 24), (52, 24)], fill=INK)
+    d.rectangle([12, 40, 50, 47], fill=(168, 128, 88), outline=INK)
+    # 米面粮袋：两只鼓囊的口袋
+    if sack_side is not None:
+        bx = 6 if sack_side == "l" else 46
+        d.ellipse([bx, 42, bx + 12, 54], fill=(214, 196, 160), outline=INK)
+        d.line([(bx + 2, 44), (bx + 10, 44)], fill=INK + (120,))
+        d.ellipse([bx + (10 if sack_side == "l" else -12), 44, bx + (20 if sack_side == "l" else -2), 54],
+                  fill=(196, 170, 128), outline=INK)
+    if door is None:
+        d.rectangle([24, 26, 36, 33], fill=(210, 200, 180), outline=INK)
+    return img.resize((32, 32), Image.LANCZOS)
+
+
+def paint_restaurant(door, lantern_side):
+    S = 64
+    img = canvas(S, S, [4, 44, 60, 60])
+    d = ImageDraw.Draw(img)
+    # 两层酒楼：下层面铺 + 上层雅阁 + 大招牌
+    d.rectangle([10, 36, 54, 52], fill=(238, 230, 210), outline=INK)
+    d.rectangle([16, 22, 48, 36], fill=(238, 230, 210), outline=INK)
+    d.polygon([(6, 22), (18, 10), (46, 10), (58, 22)], fill=ROOF)
+    d.line([(6, 22), (18, 10), (46, 10), (58, 22), (6, 22)], fill=INK)
+    d.polygon([(4, 36), (14, 26), (50, 26), (60, 36)], fill=ROOF_DARK)
+    d.line([(4, 36), (14, 26), (50, 26), (60, 36), (4, 36)], fill=INK)
+    if door is None:
+        d.rectangle([20, 28, 28, 35], fill=(210, 200, 180), outline=INK)
+        d.rectangle([36, 28, 44, 35], fill=(210, 200, 180), outline=INK)
+    else:
+        dx = {"c": 28, "l": 14, "r": 42}[door]
+        d.rectangle([dx, 42, dx + 8, 52], fill=WOOD, outline=INK)
+        d.rectangle([24, 28, 40, 34], fill=(210, 200, 180), outline=INK)
+    # 门口灯笼
+    if lantern_side is not None:
+        lx = 8 if lantern_side == "l" else 54
+        d.line([(lx, 36), (lx, 40)], fill=INK, width=2)
+        d.ellipse([lx - 3, 40, lx + 3, 48], fill=(196, 84, 60), outline=INK)
+        d.line([(lx, 48), (lx, 50)], fill=INK, width=1)
+    # 酒旗
+    d.line([(32, 10), (32, 2)], fill=INK, width=2)
+    d.polygon([(32, 2), (44, 4), (44, 12), (32, 10)], fill=(172, 62, 52), outline=INK)
+    d.line([(34, 6), (42, 7)], fill=(238, 232, 220))
+    return img.resize((32, 32), Image.LANCZOS)
+
+
+for i, door in enumerate(DOORS):
+    side4 = None if door is None else ("r" if i % 2 == 0 else "l")
+    save(paint_winery(door, side4), f"winery_d{i}.png")
+    save(paint_oilpress(door, side4), f"oilpress_d{i}.png")
+    save(paint_loom(door, side4), f"loom_d{i}.png")
+    save(paint_grocer(door, side4), f"grocer_d{i}.png")
+    save(paint_restaurant(door, side4), f"restaurant_d{i}.png")
+
+
 # ---------- 树与行人 ----------
 W, H = 40, 56
 t = canvas(W, H)

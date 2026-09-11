@@ -8,6 +8,7 @@ const MAIN_SCENE := "res://scenes/main.tscn"
 func _ready() -> void:
 	# 防御：若从游戏场景返回，根 Viewport 上可能残留相机 canvas_transform
 	get_viewport().canvas_transform = Transform2D.IDENTITY
+	Main.detect_debug_mode()  # 开发者命令行参数，主菜单即生效
 	var bg := ColorRect.new()
 	bg.color = Color(0.13, 0.12, 0.10)
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -33,6 +34,14 @@ func _ready() -> void:
 	subtitle.add_theme_font_size_override("font_size", 16)
 	subtitle.modulate = Color(0.8, 0.75, 0.6)
 	box.add_child(subtitle)
+
+	if Main.debug_mode:
+		var debug_label := Label.new()
+		debug_label.text = "DEBUG 模式（数值只增不减 · 禁止存档）"
+		debug_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		debug_label.add_theme_font_size_override("font_size", 14)
+		debug_label.modulate = Color(1.0, 0.35, 0.3)
+		box.add_child(debug_label)
 
 	var spacer := Control.new()
 	spacer.custom_minimum_size = Vector2(0, 16)
