@@ -180,12 +180,10 @@ var _zoom := Vector2.ONE
 const ESTATE_GROUND_MARGIN := 8
 
 # 烟囱冒烟的建筑及其出烟点（相对建筑基座触地点的屏幕偏移，截图校订）
-# 冒烟建筑：烟圈起点（相对格原点=格底部中心，y 向上为负）
+# 冒烟建筑：烟圈起点（相对格原点=格底部中心，y 向上为负）；仅贴图带烟囱的建筑
 const SMOKE_BUILDINGS := {
-	"mill": Vector2(16, -79),
-	"winery": Vector2(16, -77),
-	"oilpress": Vector2(-32, -77),
-	"restaurant": Vector2(17, -85),
+	"mill": Vector2(-19, -62),
+	"winery": Vector2(-13, -71),
 }
 
 # 建造菜单分类（法老王式）：一级为分类方块 + 道路/拆除，二级为分类内建筑
@@ -1876,22 +1874,6 @@ func _draw_smoke(origin: Vector2) -> void:
 		draw_circle(p, r * 0.8, Color(0.72, 0.73, 0.76, 0.4 * (1.0 - ph)))   # 烟圈亮芯
 
 
-func _draw_waterwheel(side: float) -> void:
-	## 磨坊水车：圆环 + 8 辐条 + 叶片，匀速旋转（贴图不画水车，程序绘制）
-	var center := Vector2(side * 34.0, -36.0)
-	var r := 15.0
-	draw_arc(center, r, 0, TAU, 24, Color(0.32, 0.28, 0.24), 2.5)
-	draw_arc(center, r - 4.0, 0, TAU, 24, Color(0.32, 0.28, 0.24, 0.7), 1.5)
-	var a0 := _anim_t * 2.2 * -side  # 左右侧转向相反
-	for i in 8:
-		var a := a0 + i * PI / 4.0
-		var tip := center + Vector2(cos(a), sin(a)) * r
-		draw_line(center, tip, Color(0.4, 0.35, 0.3), 2.0)
-		var blade := tip + Vector2(cos(a + PI / 2.0), sin(a + PI / 2.0)) * 5.0
-		draw_line(tip, blade, Color(0.45, 0.4, 0.34), 3.0)
-	draw_circle(center, 2.5, Color(0.32, 0.28, 0.24))
-
-
 func _draw_flames(top_y: float) -> void:
 	## 火灾跳焰：3 簇火苗在立牌顶部抖动（橙底黄心双层三角）
 	for i in 3:
@@ -1980,8 +1962,6 @@ func _draw() -> void:
 			var btex := _building_tex(item[2])
 			var btint := Color(1, 0.45, 0.35) if burning.has(cell) else Color.WHITE
 			draw_texture(btex, _billboard_off(btex), btint)
-			if item[2] == "mill":
-				_draw_waterwheel(1.0 if _rot % 2 == 0 else -1.0)
 			if SMOKE_BUILDINGS.has(item[2]) and not burning.has(cell):
 				_draw_smoke(SMOKE_BUILDINGS[item[2]])
 			if burning.has(cell):
