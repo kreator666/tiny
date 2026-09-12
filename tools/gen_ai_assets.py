@@ -87,7 +87,7 @@ STYLE_SINGLE = STYLE  # 树/行人同一风格
 # 单贴图素材：文件名 -> (提示词, 目标尺寸)
 SINGLES = {
     "tree.png": ("one single lush Chinese pine tree with layered cloud-like green foliage and a visible brown trunk, the tree only, no pavilion, no building, no structure", SIZE_TREE),
-    "villager.png": ("one single tiny ancient Chinese villager wearing a grey robe and a straw hat, walking pose, complete full body from head to toe clearly visible, side view, the person only", SIZE_VILLAGER),
+    "villager.png": ("one single ancient Chinese farmer walking, a human figure with head, two arms and two legs clearly visible, wearing a grey robe and a straw hat, full body from head to toe, side view, person only, no house, no building, no structure", SIZE_VILLAGER),
     "well.png": ("a traditional Chinese stone water well built of grey stone blocks with a small wooden roof frame and a hanging wooden bucket on a rope, dark tiled little roof", SIZE_1X1),
 }
 
