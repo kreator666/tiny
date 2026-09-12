@@ -1,9 +1,7 @@
 # -*- coding: utf-8 -*-
-"""程序化生成工笔画风游戏贴图（宣纸底 + 宋式建筑，含四方向变体）。
-输出到项目 assets/gongbi/ 目录。风格要点：
-- 宣纸：米黄底 + 细微颗粒 + 偶尔墨点
-- 工笔：墨线勾边 + 矿物颜料平涂（花青、赭石、藤黄、石绿）
-- 方向约定：d0=正门(南) d1=门在右(东) d2=背面(北) d3=门在左(西)
+"""v2 程序化生成工笔画风游戏贴图：3/4 俯视伪透视 + CELL 48 配套尺寸。
+画法核心：盒体投影（前墙亮/侧墙暗/双坡瓦顶/落地影），参考凯撒大帝3/法老王。
+锚点约定：所有立牌贴图底影椭圆中心 = (图宽/2, 图高-8)，main.gd 按此算偏移。
 运行：python tools/gen_gongbi_assets.py
 """
 import math
@@ -19,12 +17,14 @@ PAPER = (233, 224, 198)        # 宣纸米黄
 INK = (58, 52, 46)             # 墨线
 ROOF = (96, 108, 122)          # 花青瓦
 ROOF_DARK = (70, 80, 94)
-WALL = (244, 240, 230)         # 粉墙
+WALL = (244, 240, 230)         # 粉墙（受光面）
+WALL_DARK = (206, 198, 182)    # 背光面
 THATCH = (150, 124, 88)        # 茅
 WOOD = (122, 86, 58)           # 赭石木
 GREEN = (78, 108, 66)          # 石绿
 GREEN_DARK = (52, 78, 48)
 SOIL = (156, 118, 76)          # 赭石土
+SHADOW = (60, 55, 45)          # 落地影
 
 
 def save(img, name):
@@ -33,13 +33,12 @@ def save(img, name):
     print("生成:", name)
 
 
-def canvas(w, h, shadow_box=None):
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    if shadow_box:
-        sh = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-        ImageDraw.Draw(sh).ellipse(shadow_box, fill=(60, 55, 45, 70))
-        img = Image.alpha_composite(img, sh.filter(ImageFilter.GaussianBlur(3)))
-    return img
+def shade(col, f):
+    return tuple(max(0, min(255, int(c * f))) for c in col)
+
+
+def canvas(w, h):
+    return Image.new("RGBA", (w, h), (0, 0, 0, 0))
 
 
 def paper(size, tone=0):
@@ -58,233 +57,413 @@ def paper(size, tone=0):
     return img
 
 
-def wash(img, color, alpha, count, rmin, rmax):
-    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    d = ImageDraw.Draw(overlay)
-    w, h = img.size
-    for _ in range(count):
-        x, y = rng.randint(0, w), rng.randint(0, h)
-        r = rng.randint(rmin, rmax)
-        d.ellipse([x - r, y - r // 2, x + r, y + r // 2],
-                  fill=color + (rng.randint(alpha // 2, alpha),))
-    overlay = overlay.filter(ImageFilter.GaussianBlur(3))
-    img.paste(Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB"),
-              (0, 0))
+def ground_shadow(img, cx, cy, rx, ry):
+    """落地影：椭圆中心 (cx,cy) 即全贴图锚点"""
+    sh = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(sh).ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=SHADOW + (70,))
+    img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(3)))
 
 
-# ---------- 地面 ----------
+# ============================================================
+# 盒体 3/4 建筑通用 painter
+#   宽轴 W 水平向右，深轴 D 指向左上（后），可见面：前墙(亮)/右墙(暗)/双坡瓦顶
+#   落地影椭圆中心固定 (Wc/2, Hc-16)，即全贴图锚点（main.gd 偏移公式依赖）
+# ============================================================
+def add(a, b):
+    return (a[0] + b[0], a[1] + b[1])
+
+
+def paint_roof(d, pt, w_px, h_px, gable, W, D, roof_col, thatch=False):
+    """双坡瓦顶（屋脊沿宽轴）：大前坡(亮) + 脊后一条暗色后坡；瓦垄顺坡垂下"""
+    over = 7  # 檐口出挑
+    efl = (pt(0, 0, h_px)[0] - over * 0.6, pt(0, 0, h_px)[1] + over)
+    efr = (pt(1, 0, h_px)[0] + over * 0.6, pt(1, 0, h_px)[1] + over)
+    r0 = pt(0, 0.5, h_px + gable)   # 脊左端
+    r1 = pt(1, 0.5, h_px + gable)   # 脊右端
+
+    # 后坡：脊线上方一条窄带（纯装饰性，固定宽度，不再用几何进深）
+    off = (-w_px * 0.10, -max(9, gable * 0.26))
+    d.polygon([r0, r1, (r1[0] + off[0], r1[1] + off[1]), (r0[0] + off[0], r0[1] + off[1])],
+              fill=shade(roof_col, 0.72), outline=INK)
+    # 前坡（正对观察者，受光最亮）
+    d.polygon([efl, efr, r1, r0], fill=roof_col, outline=INK)
+    # 瓦垄：脊 → 前檐，顺坡向下的竖线
+    n = 6 if w_px > 150 else 5
+    for i in range(1, n + 1):
+        t = i / (n + 1)
+        ax = r0[0] + (r1[0] - r0[0]) * t
+        ay = r0[1] + (r1[1] - r0[1]) * t
+        d.line([(ax, ay), (efl[0] + (efr[0] - efl[0]) * t, efl[1])],
+               fill=shade(roof_col, 0.7) + (200,), width=2)
+    if thatch:  # 茅草纹：斜向碎线
+        for _ in range(26):
+            t = rng.random()
+            s = rng.random()
+            p0 = (efl[0] + (r1[0] - efl[0]) * s * 0.5 + (efr[0] - efl[0]) * t * 0.5,
+                  efl[1] + (r1[1] - efl[1]) * s * 0.5 + (efr[1] - efl[1]) * t * 0.5)
+            d.line([p0, (p0[0] + 4, p0[1] + 6)], fill=(120, 98, 66, 150), width=2)
+    # 正脊
+    d.line([r0, r1], fill=INK, width=3)
+    return ((r0[0] + r1[0]) / 2, (r0[1] + r1[1]) / 2)   # 脊中点（重檐锚点）
+
+
+def door_and_windows(d, pt, h_px, door="c", win=True, two_story=False):
+    """门/窗画在前墙上；door: c 居中 / l 左 / r 右 / None 背面（双窗）"""
+    fbl, fbr = pt(0, 0), pt(1, 0)
+    w_px = fbr[0] - fbl[0]
+    base_y = fbl[1]
+    dw, dh = max(18, int(w_px * 0.16)), max(26, int(h_px * 0.36))
+    ww, wh = max(12, int(w_px * 0.09)), max(12, int(h_px * 0.20))
+
+    def fx(t):
+        return fbl[0] + w_px * t
+
+    def win_at(wx, wy):
+        d.rectangle([wx, wy - wh, wx + ww, wy], fill=(210, 200, 180), outline=INK)
+        d.line([(wx + ww // 2, wy - wh), (wx + ww // 2, wy)], fill=INK)
+        d.line([(wx, wy - wh // 2), (wx + ww, wy - wh // 2)], fill=INK)
+
+    if door is None:  # 背面：两窗
+        win_at(fx(0.16), base_y - 6)
+        win_at(fx(0.64), base_y - 6)
+        return
+    dx = {"c": 0.44, "l": 0.14, "r": 0.60}[door]
+    d.rectangle([fx(dx), base_y - dh, fx(dx) + dw, base_y], fill=WOOD, outline=INK)
+    d.line([(fx(dx) + dw // 2, base_y - dh), (fx(dx) + dw // 2, base_y)], fill=INK)
+    if two_story:
+        win_at(fx(0.14), base_y - h_px * 0.60)
+        win_at(fx(0.66), base_y - h_px * 0.60)
+    elif win:
+        wx = 0.64 if door in ("c", "l") else 0.14
+        win_at(fx(wx), base_y - 6)
+
+
+def chimney(d, pt, h_px, u=0.86, v=0.9, col=(150, 96, 78)):
+    """屋角小烟囱（冒烟建筑），返回烟口画布坐标"""
+    x, y = pt(u, v, h_px + 6)
+    d.rectangle([x - 6, y - 26, x + 6, y], fill=col, outline=INK)
+    d.rectangle([x - 8, y - 30, x + 8, y - 24], fill=shade(col, 0.8), outline=INK)
+    return (x, y - 30)
+
+
+def compose_building(w_px=130, h_px=76, gable=46, two_story=False,
+                     wall=WALL, roof_col=ROOF, thatch=False, door="c",
+                     props=None, size=(192, 192), out=96, flip=False,
+                     win=True):
+    """1 格立牌建筑完整绘制，输出 size[0]/2 x size[1]/2"""
+    Wc, Hc = size
+    img = canvas(Wc, Hc)
+    dr = ImageDraw.Draw(img)
+    ground_shadow(img, Wc / 2, Hc - 16, w_px * 0.62, 24)
+    # 盒体轴：宽轴水平，深轴指向左上；贴图右移为深度留左侧空间
+    Wv = (w_px, 0)
+    Dv = (-w_px * 0.28, -w_px * 0.21)
+    P = (Wc / 2 - w_px / 2 + w_px * 0.14, Hc - 24)
+
+    def pt(u, v, z=0.0):
+        return (P[0] + Wv[0] * u + Dv[0] * v, P[1] + Wv[1] * u + Dv[1] * v - z)
+
+    fl, fr = pt(0, 0), pt(1, 0)
+    ftl, ftr = pt(0, 0, h_px), pt(1, 0, h_px)
+    br, btr = pt(1, 1), pt(1, 1, h_px)
+    dr.polygon([fr, br, btr, ftr], fill=WALL_DARK, outline=INK)   # 右墙暗面
+    dr.polygon([fl, fr, ftr, ftl], fill=wall, outline=INK)        # 前墙亮面
+    # 木质墙板纹理（伐木屋类由 wall 色区分，此处略）
+    if two_story:  # 二层：前墙加腰檐
+        mid = pt(0, 0, h_px * 0.55)
+        mid2 = pt(1, 0, h_px * 0.55)
+        dr.line([mid, mid2], fill=INK + (160,), width=2)
+    paint_roof(dr, pt, w_px, h_px, gable, Wv, Dv, roof_col, thatch)
+    door_and_windows(dr, pt, h_px, door, win=win, two_story=two_story)
+    smoke_spout = None
+    if props:
+        smoke_spout = props(dr, pt, h_px)
+    if flip:
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+    img = img.resize((out, out), Image.LANCZOS)
+    return img, smoke_spout
+
+
+# ---------- 各建筑类型点缀（props: 在盒体上画识别物，返回烟囱烟口或 None） ----------
+
+def props_none(dr, pt, h):
+    return None
+
+
+def props_jar_flag(color=(146, 74, 56)):
+    def f(dr, pt, h):
+        fbl = pt(0, 0)
+        w_px = pt(1, 0)[0] - fbl[0]
+        jx = fbl[0] + w_px * 0.78
+        jy = fbl[1]
+        dr.ellipse([jx, jy - 20, jx + 22, jy], fill=color, outline=INK)      # 酒坛
+        dr.ellipse([jx + 6, jy - 26, jx + 16, jy - 16], fill=shade(color, 1.2), outline=INK)
+        fx = fbl[0] + w_px * 0.06
+        dr.line([(fx, jy), (fx, jy - h - 34)], fill=INK, width=3)             # 酒旗
+        dr.polygon([(fx, jy - h - 34), (fx + 26, jy - h - 30), (fx + 26, jy - h - 12), (fx, jy - h - 16)],
+                   fill=(172, 62, 52), outline=INK)
+        return chimney(dr, pt, h)
+    return f
+
+
+def props_oilpress(dr, pt, h):
+    fbl = pt(0, 0)
+    w_px = pt(1, 0)[0] - fbl[0]
+    px = fbl[0] + w_px * 0.80
+    py = fbl[1]
+    dr.line([(px, py), (px, py - h * 0.62)], fill=INK, width=4)               # 榨油架
+    dr.line([(px, py - h * 0.62), (px + 20, py - h * 0.62)], fill=INK, width=4)
+    dr.line([(px + 20, py - h * 0.62), (px + 20, py - h * 0.38)], fill=INK, width=3)
+    dr.ellipse([px + 10, py - h * 0.30, px + 26, py - h * 0.06], fill=(120, 96, 54), outline=INK)
+    return chimney(dr, pt, h, u=0.12)
+
+
+def props_loom(dr, pt, h):
+    fbl = pt(0, 0)
+    w_px = pt(1, 0)[0] - fbl[0]
+    rx = fbl[0] + w_px * 0.74
+    ry = fbl[1]
+    dr.line([(rx, ry), (rx, ry - h * 0.7)], fill=INK, width=3)                # 布架
+    dr.line([(rx + 22, ry), (rx + 22, ry - h * 0.7)], fill=INK, width=3)
+    dr.rectangle([rx + 2, ry - h * 0.66, rx + 10, ry - h * 0.2], fill=(172, 62, 52), outline=INK)
+    dr.rectangle([rx + 12, ry - h * 0.66, rx + 20, ry - h * 0.2], fill=(96, 108, 122), outline=INK)
+    return None
+
+
+def props_stall(sacks=True):
+    def f(dr, pt, h):
+        fbl = pt(0, 0)
+        w_px = pt(1, 0)[0] - fbl[0]
+        ax = fbl[0] + w_px * 0.10
+        ay = fbl[1]
+        dr.line([(ax, ay), (ax, ay - h * 0.5)], fill=INK, width=3)            # 摊篷
+        dr.line([(ax + 30, ay), (ax + 30, ay - h * 0.5)], fill=INK, width=3)
+        dr.polygon([(ax - 4, ay - h * 0.5), (ax + 34, ay - h * 0.5),
+                    (ax + 30, ay - h * 0.5 - 14), (ax, ay - h * 0.5 - 14)],
+                   fill=(238, 232, 220), outline=INK)
+        for sx in range(int(ax), int(ax + 30), 7):
+            dr.line([(sx, ay - h * 0.5 - 14), (sx - 2, ay - h * 0.5)], fill=(146, 94, 62), width=3)
+        if sacks:
+            dr.ellipse([ax - 12, ay - 16, ax + 4, ay], fill=(214, 196, 160), outline=INK)
+            dr.ellipse([ax - 2, ay - 12, ax + 14, ay], fill=(196, 170, 128), outline=INK)
+        return None
+    return f
+
+
+def props_restaurant(dr, pt, h):
+    fbl = pt(0, 0)
+    w_px = pt(1, 0)[0] - fbl[0]
+    lx = fbl[0] + w_px * 0.06
+    ly = fbl[1]
+    dr.line([(lx, ly), (lx, ly - 18)], fill=INK, width=2)                     # 灯笼
+    dr.ellipse([lx - 7, ly - 18, lx + 7, ly - 4], fill=(196, 84, 60), outline=INK)
+    fx = fbl[0] + w_px * 0.5
+    fy = pt(0.5, 0, h)[1]
+    dr.line([(fx, fy + 8), (fx, fy - 26)], fill=INK, width=2)                 # 屋顶酒旗
+    dr.polygon([(fx, fy - 26), (fx + 30, fy - 22), (fx + 30, fy - 6), (fx, fy - 10)],
+               fill=(172, 62, 52), outline=INK)
+    return chimney(dr, pt, h, u=0.88)
+
+
+def props_lantern(dr, pt, h):
+    fbl = pt(0, 0)
+    w_px = pt(1, 0)[0] - fbl[0]
+    lx = fbl[0] + w_px * 0.10
+    ly = fbl[1]
+    dr.line([(lx, ly), (lx, ly - 20)], fill=INK, width=2)
+    dr.ellipse([lx - 7, ly - 20, lx + 7, ly - 4], fill=(196, 84, 60), outline=INK)
+    return None
+
+
+def props_woodpile(dr, pt, h):
+    fbl = pt(0, 0)
+    w_px = pt(1, 0)[0] - fbl[0]
+    px = fbl[0] + w_px * 0.76
+    py = fbl[1]
+    for i, ly in enumerate((py - 6, py - 16, py - 26)):                        # 柴堆
+        dr.rounded_rectangle([px, ly - 8, px + 26, ly], 3, fill=(150, 116, 78), outline=INK)
+        dr.ellipse([px + 18, ly - 8, px + 26, ly], fill=(196, 164, 116), outline=INK)
+    return None
+
+
+def props_well(dr, pt, h):
+    fbl = pt(0, 0)
+    w_px = pt(1, 0)[0] - fbl[0]
+    cx = fbl[0] + w_px * 0.30
+    cy = fbl[1]
+    dr.ellipse([cx - 20, cy - 14, cx + 20, cy + 2], fill=(170, 164, 150), outline=INK)  # 井台
+    dr.ellipse([cx - 13, cy - 10, cx + 13, cy - 2], fill=(40, 44, 52), outline=INK)
+    dr.line([(cx - 16, cy - 12), (cx - 16, cy - h * 0.75)], fill=WOOD, width=4)          # 轱辘架
+    dr.line([(cx + 16, cy - 12), (cx + 16, cy - h * 0.75)], fill=WOOD, width=4)
+    dr.line([(cx - 20, cy - h * 0.75), (cx + 20, cy - h * 0.75)], fill=WOOD, width=4)
+    dr.line([(cx, cy - h * 0.75), (cx, cy - 22)], fill=INK, width=2)
+    dr.rectangle([cx - 5, cy - 22, cx + 5, cy - 12], fill=(150, 116, 78), outline=INK)   # 水桶
+    return None
+
+
+def props_clinic(dr, pt, h):
+    fbl = pt(0, 0)
+    w_px = pt(1, 0)[0] - fbl[0]
+    fx = fbl[0] + w_px * 0.08
+    fy = fbl[1]
+    dr.line([(fx, fy), (fx, fy - h - 30)], fill=INK, width=3)                 # 药幌杆
+    dr.polygon([(fx, fy - h - 30), (fx + 22, fy - h - 26), (fx + 22, fy - h - 6), (fx, fy - h - 10)],
+               fill=(238, 232, 220), outline=INK)
+    dr.line([(fx + 6, fy - h - 22), (fx + 16, fy - h - 20)], fill=(172, 62, 52), width=4)
+    dr.line([(fx + 6, fy - h - 14), (fx + 16, fy - h - 12)], fill=(172, 62, 52), width=4)
+    return None
+
+
+def props_repair(dr, pt, h):
+    fbl = pt(0, 0)
+    w_px = pt(1, 0)[0] - fbl[0]
+    rx = fbl[0] + w_px * 0.72
+    ry = fbl[1]
+    dr.line([(rx, ry), (rx, ry - h * 0.55)], fill=INK, width=3)               # 工具架
+    dr.line([(rx + 24, ry), (rx + 24, ry - h * 0.55)], fill=INK, width=3)
+    dr.line([(rx - 2, ry - h * 0.55), (rx + 26, ry - h * 0.55)], fill=INK, width=3)
+    dr.line([(rx + 5, ry - h * 0.55), (rx + 3, ry - h * 0.2)], fill=WOOD, width=3)       # 锯
+    dr.line([(rx + 14, ry - h * 0.55), (rx + 16, ry - h * 0.18)], fill=INK, width=3)     # 锤
+    dr.rectangle([rx + 12, ry - h * 0.24, rx + 20, ry - h * 0.14], fill=(120, 128, 138), outline=INK)
+    return None
+
+
+# ---------- 1 格立牌建筑生成（d0 正门 / d1 门右 / d2 背 / d3 门左 = d1 镜像） ----------
+
+def emit_building(base, spec):
+    for i, door in enumerate(["c", "r", None, "l"]):
+        img, _ = compose_building(door=(None if door is None else ("r" if door == "r" else "c")),
+                                  flip=(door == "l"), **spec)
+        save(img, f"{base}_d{i}.png")
+
+
+SPECS = {
+    "hut": dict(thatch=True, roof_col=THATCH, h_px=70, gable=38),
+    "house": dict(two_story=True, h_px=88, gable=48),
+    "mill": dict(h_px=80, gable=48, props=props_jar_flag()),
+    "market": dict(props=props_stall(sacks=False)),
+    "grocer": dict(props=props_stall(sacks=True)),
+    "winery": dict(props=props_jar_flag(color=(120, 96, 54))),
+    "oilpress": dict(thatch=True, roof_col=THATCH, props=props_oilpress),
+    "loom": dict(props=props_loom),
+    "woodcutter": dict(thatch=True, roof_col=THATCH, wall=(196, 158, 116), props=props_woodpile),
+    "restaurant": dict(two_story=True, h_px=92, gable=46, props=props_restaurant),
+    "clinic": dict(props=props_clinic),
+    "repair": dict(props=props_repair),
+}
+
+for base, spec in SPECS.items():
+    emit_building(base, spec)
+
+# 水井（无方向单张）
+well_img, _ = compose_building(wall=WALL, props=props_well)
+save(well_img, "well.png")
+
+
+# ---------- 大宅（2x2，144x120，锚点影中心=(144,112)） ----------
+
+def paint_estate(tier):
+    Wc, Hc = 288, 240
+    w_px, h_px, gable = 200, 92, 62
+    img = canvas(Wc, Hc)
+    dr = ImageDraw.Draw(img)
+    ground_shadow(img, Wc / 2, Hc - 16, w_px * 0.60, 26)
+    Wv = (w_px, 0)
+    Dv = (-w_px * 0.28, -w_px * 0.21)
+    P = (Wc / 2 - w_px / 2 + w_px * 0.14, Hc - 24)
+
+    def pt(u, v, z=0.0):
+        return (P[0] + Wv[0] * u + Dv[0] * v, P[1] + Wv[1] * u + Dv[1] * v - z)
+
+    fl, fr = pt(0, 0), pt(1, 0)
+    ftl, ftr = pt(0, 0, h_px), pt(1, 0, h_px)
+    br, btr = pt(1, 1), pt(1, 1, h_px)
+    dr.polygon([fr, br, btr, ftr], fill=WALL_DARK, outline=INK)
+    dr.polygon([fl, fr, ftr, ftl], fill=WALL, outline=INK)
+    # 前围墙（矮墙，带门洞）
+    wy = pt(0, 0)[1]
+    wall_h = 26
+    gx0, gx1 = pt(0.42, 0)[0], pt(0.58, 0)[0]
+    dr.rectangle([fl[0], wy - wall_h, gx0, wy], fill=WALL_DARK, outline=INK)
+    dr.rectangle([gx1, wy - wall_h, fr[0], wy], fill=WALL_DARK, outline=INK)
+    dr.line([(fl[0], wy - wall_h), (fr[0], wy - wall_h)], fill=ROOF_DARK, width=4)
+    # 门楼小顶
+    dr.polygon([(gx0 - 6, wy - wall_h), (gx1 + 6, wy - wall_h),
+                (gx1 + 2, wy - wall_h - 16), (gx0 + 2, wy - wall_h - 16)], fill=ROOF, outline=INK)
+    apex = paint_roof(dr, pt, w_px, h_px, gable, Wv, Dv, ROOF)
+    if tier == 3:  # 重檐：正脊上方再加一层小顶
+        a = apex
+        dr.polygon([(a[0] - 34, a[1] + 14), (a[0] + 34, a[1] + 14),
+                    (a[0] + 22, a[1] - 14), (a[0] - 22, a[1] - 14)], fill=ROOF_DARK, outline=INK)
+        dr.line([(a[0] - 22, a[1] - 14), (a[0] + 22, a[1] - 14)], fill=INK, width=3)
+        for t in (-20, -8, 6, 18):
+            dr.line([(a[0] + t, a[1] + 12), (a[0] + int(t * 0.6), a[1] - 12)],
+                    fill=shade(ROOF_DARK, 0.7) + (200,), width=2)
+        # 门前花木
+        for tx in (fl[0] + 8, fr[0] - 24):
+            dr.ellipse([tx, wy - 18, tx + 16, wy - 2], fill=GREEN + (220,), outline=INK)
+    # 正房门窗（前墙在围墙后上方）
+    door_and_windows(dr, pt, h_px, "c", two_story=False)
+    img = img.resize((144, 120), Image.LANCZOS)
+    return img
+
+
+for tier in (2, 3):
+    for i, flip in enumerate([False, True, False, True]):
+        img = paint_estate(tier)
+        if flip:
+            img = img.transpose(Image.FLIP_LEFT_RIGHT)
+        save(img, f"estate{tier}_d{i}.png")
+
+
+# ---------- 地面 / 道路 / 作物田（48x48） ----------
+
 for v in range(2):
-    g = paper(32, tone=rng.randint(-4, 4))
-    wash(g, GREEN, 48, 8, 7, 16)
-    wash(g, (120, 140, 90), 26, 5, 4, 10)
+    g = paper(48, tone=rng.randint(-4, 4))
     d = ImageDraw.Draw(g, "RGBA")
-    for _ in range(16):
-        x, y = rng.randint(1, 30), rng.randint(1, 30)
-        d.line([(x, y), (x + rng.randint(-1, 1), y - 2)],
-               fill=GREEN_DARK + (rng.randint(60, 120),), width=1)
-    save(g, f"ground_{v}.png")
-
-f = paper(32)
-d = ImageDraw.Draw(f, "RGBA")
-d.rectangle([0, 0, 31, 31], fill=SOIL + (90,))
-for y in range(2, 32, 4):
-    d.line([(0, y), (31, y)], fill=(96, 70, 44, 70), width=1)
-for y in range(4, 32, 4):
-    d.line([(0, y), (31, y)], fill=(206, 170, 118, 50), width=1)
-f = f.filter(ImageFilter.GaussianBlur(0.4))
-d = ImageDraw.Draw(f, "RGBA")
-for _ in range(22):
-    x, y = rng.randint(1, 30), rng.randint(1, 30)
-    d.line([(x, y), (x, y - 2)], fill=GREEN_DARK + (220,), width=1)
-    d.point([(x - 1, y - 1)], fill=GREEN + (200,))
-save(f, "farm.png")
-
-r = paper(32)
-d = ImageDraw.Draw(r, "RGBA")
-d.rectangle([0, 8, 31, 24], fill=(172, 152, 120, 120))
-for y in (8, 24):
-    d.line([(0, y), (31, y)], fill=INK + (70,), width=1)
-for _ in range(12):
-    x, y = rng.randint(0, 31), rng.randint(9, 23)
-    d.point([(x, y)], fill=(120, 102, 78, 160))
-r = r.filter(ImageFilter.GaussianBlur(0.4))
-save(r, "road.png")
+    for _ in range(30):
+        x, y = rng.randint(1, 46), rng.randint(1, 46)
+        d.line([(x, y), (x + rng.randint(-1, 1), y - 3)], fill=GREEN_DARK + (rng.randint(60, 120),), width=1)
+    for _ in range(10):
+        x, y = rng.randint(2, 44), rng.randint(2, 44)
+        d.ellipse([x, y, x + rng.randint(2, 5), y + rng.randint(1, 3)], fill=GREEN + (rng.randint(30, 60),))
+    save(g.convert("RGBA"), f"ground_{v}.png")
 
 
-# ---------- 立牌建筑通用绘制 ----------
-# door 位置: "c"正中 "r"右 "l"左 None=背面
-def paint_house(door, thatch=False):
-    S = 64
-    img = canvas(S, S, [8, 50, 56, 60])
-    d = ImageDraw.Draw(img)
-    roof_col = THATCH if thatch else ROOF
-    d.rectangle([14, 34, 50, 52], fill=WALL if not thatch else (238, 230, 210))
-    d.rectangle([14, 34, 50, 52], outline=INK)
-    d.polygon([(6, 34), (20, 20), (44, 20), (58, 34)], fill=roof_col)
-    d.line([(6, 34), (20, 20), (44, 20), (58, 34), (6, 34)], fill=INK)
-    d.line([(20, 20), (44, 20)], fill=INK, width=2)
-    for x in range(12, 54, 4):
-        top_y = 20 + abs(x - 32) * 14 // 26
-        d.line([(x, top_y + 1), (x - 2 if x < 32 else x + 2, 33)],
-               fill=ROOF_DARK + (160,), width=1)
-    d.line([(6, 34), (58, 34)], fill=INK)
-    if thatch:
-        for x in range(10, 56, 5):
-            d.line([(x, 26), (x - 3 if x < 32 else x + 3, 33)],
-                   fill=(120, 98, 66, 140), width=1)
-
-    def win(wx):
-        d.rectangle([wx, 41, wx + 4, 47], fill=(210, 200, 180), outline=INK)
-        d.line([(wx + 2, 41), (wx + 2, 47)], fill=INK)
-        d.line([(wx, 44), (wx + 4, 44)], fill=INK)
-
-    if door is None:  # 背面：双窗
-        win(19)
-        win(41)
-    else:
-        dx = {"c": 28, "l": 16, "r": 40}[door]
-        d.rectangle([dx, 40, dx + 8, 52], fill=WOOD, outline=INK)
-        d.line([(dx + 4, 40), (dx + 4, 52)], fill=INK)
-        d.point([(dx + 2, 45), (dx + 6, 45)], fill=(220, 190, 120))
-        win(41 if door == "l" else 17)
-    return img.resize((32, 32), Image.LANCZOS)
-
-
-def paint_mill(door, wheel_side):
-    S = 64
-    img = canvas(S, S, [6, 48, 58, 58])
-    d = ImageDraw.Draw(img)
-    d.rectangle([12, 30, 50, 50], fill=(238, 230, 210), outline=INK)
-    d.polygon([(4, 30), (20, 15), (42, 15), (58, 30)], fill=(136, 112, 82))
-    d.line([(4, 30), (20, 15), (42, 15), (58, 30), (4, 30)], fill=INK)
-    d.line([(20, 15), (42, 15)], fill=INK, width=2)
-    if door is not None:
-        dx = {"c": 28, "l": 16, "r": 36}[door]
-        d.rectangle([dx, 38, dx + 8, 50], fill=WOOD, outline=INK)
-    else:
-        d.rectangle([18, 38, 26, 46], fill=(210, 200, 180), outline=INK)
-        d.line([(22, 38), (22, 46)], fill=INK)
-    if wheel_side is not None:  # 水车
-        cx = 52 if wheel_side == "r" else 12
-        cy, rr = 42, 11
-        d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=(150, 120, 90),
-                  outline=INK, width=2)
-        d.ellipse([cx - 2, cy - 2, cx + 2, cy + 2], fill=INK)
-        for a in range(0, 360, 45):
-            x2 = cx + int(rr * 0.85 * math.cos(math.radians(a)))
-            y2 = cy + int(rr * 0.85 * math.sin(math.radians(a)))
-            d.line([(cx, cy), (x2, y2)], fill=INK, width=1)
-    return img.resize((32, 32), Image.LANCZOS)
-
-
-def paint_market(door, flag_side):
-    S = 64
-    img = canvas(S, S, [6, 48, 58, 58])
-    d = ImageDraw.Draw(img)
-    for px in (14, 46):
-        d.line([(px, 24), (px, 44)], fill=INK, width=3)
-    d.polygon([(8, 24), (52, 24), (48, 16), (12, 16)], fill=(238, 232, 220))
-    for sx in range(10, 52, 7):
-        d.line([(sx, 16), (sx - 2, 24)], fill=(146, 94, 62), width=3)
-    d.line([(8, 24), (52, 24)], fill=INK)
-    d.rectangle([12, 40, 50, 47], fill=(168, 128, 88), outline=INK)
-    d.line([(12, 43), (50, 43)], fill=INK + (120,))
-    if door is None:  # 背面
-        d.rectangle([24, 26, 36, 33], fill=(210, 200, 180), outline=INK)
-    if flag_side is not None:
-        fx = 56 if flag_side == "r" else 8
-        d.line([(fx, 46), (fx, 12)], fill=INK, width=2)
-        bx0, bx1 = (fx, fx + 7) if flag_side == "r" else (fx - 7, fx)
-        d.polygon([(bx0, 12), (bx1, 14), (bx1, 28), (bx0, 26)], fill=(172, 62, 52))
-        d.line([(min(bx0, bx1) + 1, 18), (max(bx0, bx1) - 1, 19)],
-               fill=(238, 232, 220))
-        d.line([(min(bx0, bx1) + 1, 23), (max(bx0, bx1) - 1, 24)],
-               fill=(238, 232, 220))
-    return img.resize((32, 32), Image.LANCZOS)
-
-
-def paint_woodcutter(door, pile_side):
-    S = 64
-    img = canvas(S, S, [8, 50, 56, 60])
-    d = ImageDraw.Draw(img)
-    # 原木小屋：赭石木板墙 + 茅顶
-    d.rectangle([14, 34, 50, 52], fill=(172, 132, 92), outline=INK)
-    for y in range(38, 52, 4):
-        d.line([(15, y), (49, y)], fill=(120, 88, 58, 150), width=1)
-    d.polygon([(6, 34), (20, 20), (44, 20), (58, 34)], fill=THATCH)
-    d.line([(6, 34), (20, 20), (44, 20), (58, 34), (6, 34)], fill=INK)
-    d.line([(20, 20), (44, 20)], fill=INK, width=2)
-    for x in range(12, 54, 4):
-        top_y = 20 + abs(x - 32) * 14 // 26
-        d.line([(x, top_y + 1), (x - 2 if x < 32 else x + 2, 33)],
-               fill=(120, 98, 66, 160), width=1)
-    if door is None:  # 背面：小窗
-        d.rectangle([28, 40, 36, 47], fill=(210, 200, 180), outline=INK)
-        d.line([(32, 40), (32, 47)], fill=INK)
-    else:
-        dx = {"c": 28, "l": 16, "r": 34}[door]
-        d.rectangle([dx, 40, dx + 8, 52], fill=(96, 66, 42), outline=INK)
-    # 柴堆：三根叠放的原木
-    if pile_side is not None:
-        px = 10 if pile_side == "l" else 44
-        for i, ly in enumerate((46, 42, 38)):
-            d.rounded_rectangle([px, ly, px + 10, ly + 4], 2,
-                                fill=(150, 116, 78), outline=INK)
-            d.ellipse([px + 7, ly, px + 11, ly + 4], fill=(196, 164, 116), outline=INK)
-            d.ellipse([px + 8, ly + 1, px + 10, ly + 3], outline=(120, 88, 58))
-        # 斜靠的斧头
-        ax = 22 if pile_side == "l" else 42
-        d.line([(ax, 52), (ax + 6, 36)], fill=INK, width=2)
-        d.polygon([(ax + 4, 34), (ax + 11, 36), (ax + 9, 42), (ax + 3, 40)],
-                  fill=(120, 128, 138), outline=INK)
-    return img.resize((32, 32), Image.LANCZOS)
-
-
-# 门朝向: d0正 d1右 d2背 d3左
-DOORS = ["c", "r", None, "l"]
-for i, door in enumerate(DOORS):
-    save(paint_house(door, thatch=True), f"hut_d{i}.png")
-    save(paint_house(door), f"house_d{i}.png")
-    save(paint_mill(door if door != "c" else "c", None if door is None else ("r" if i % 2 == 0 else "l")), f"mill_d{i}.png")
-    save(paint_market(door, None if door is None else ("r" if i % 2 == 0 else "l")), f"market_d{i}.png")
-    save(paint_woodcutter(door, None if door is None else ("r" if i % 2 == 0 else "l")), f"woodcutter_d{i}.png")
-
-
-# ---------- 方向路块（32x32 贴地，conns 为屏幕方向 nesw 子集） ----------
 def paint_road_tile(conns):
-    mask = Image.new("L", (32, 32), 0)
+    size = 48
+    mask = Image.new("L", (size, size), 0)
     md = ImageDraw.Draw(mask)
-    c = 16
+    c = size // 2
+    w0, w1 = 15, 33
     if not conns:
-        md.ellipse([9, 9, 23, 23], fill=255)
+        md.ellipse([13, 13, 35, 35], fill=255)
     else:
         for conn in conns:
             if conn == "e":
-                md.rectangle([c, 10, 32, 22], fill=255)
+                md.rectangle([c, w0, size, w1], fill=255)
             elif conn == "w":
-                md.rectangle([0, 10, c, 22], fill=255)
+                md.rectangle([0, w0, c, w1], fill=255)
             elif conn == "s":
-                md.rectangle([10, c, 22, 32], fill=255)
+                md.rectangle([w0, c, w1, size], fill=255)
             elif conn == "n":
-                md.rectangle([10, 0, 22, c], fill=255)
-        if len(conns) == 1:  # 断头：中心圆角
-            md.ellipse([8, 8, 24, 24], fill=255)
+                md.rectangle([w0, 0, w1, c], fill=255)
+        if len(conns) == 1:
+            md.ellipse([12, 12, 36, 36], fill=255)
     edge_mask = ImageChops.subtract(mask, mask.filter(ImageFilter.MinFilter(3)))
-
-    img = canvas(32, 32)
-    dirt = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
-    dirt.paste(Image.new("RGBA", (32, 32), (188, 168, 134, 255)), (0, 0), mask)
-    # 肌理：碎石墨点
+    img = canvas(size, size)
+    dirt = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    dirt.paste(Image.new("RGBA", (size, size), (188, 168, 134, 255)), (0, 0), mask)
     dd = ImageDraw.Draw(dirt)
-    for _ in range(14):
-        x, y = rng.randint(2, 29), rng.randint(2, 29)
+    for _ in range(26):
+        x, y = rng.randint(2, 45), rng.randint(2, 45)
         if mask.getpixel((x, y)):
             dd.point([(x, y)], fill=(120, 102, 78, rng.randint(90, 160)))
             if rng.random() < 0.4:
                 dd.point([(x + 1, y)], fill=(214, 196, 160, 140))
     img = Image.alpha_composite(img, dirt)
-    edge = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
-    edge.paste(Image.new("RGBA", (32, 32), (120, 102, 78, 200)), (0, 0), edge_mask)
+    edge = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    edge.paste(Image.new("RGBA", (size, size), (120, 102, 78, 200)), (0, 0), edge_mask)
     return Image.alpha_composite(img, edge)
 
 
@@ -299,258 +478,53 @@ for name, conns in ROAD_VARIANTS.items():
     save(paint_road_tile(conns), f"road_{name}.png")
 
 
-# ---------- 大院（96x80，占 2x2 格，gate: c/r/l/None） ----------
-BRICK = (170, 164, 150)   # 青砖
-BRICK_DK = (152, 146, 132)
-
-
-def gable_roof(d, x0, ytop, x1, ybot, col=ROOF):
-    """梯形瓦屋顶 + 瓦垄墨线"""
-    pts = [(x0, ybot), (x0 + (x1 - x0) * 0.22, ytop), (x1 - (x1 - x0) * 0.22, ytop), (x1, ybot)]
-    d.polygon(pts, fill=col)
-    d.line(pts + [pts[0]], fill=INK)
-    d.line([pts[1], pts[2]], fill=INK, width=2)  # 正脊
-    for x in range(x0 + 3, x1 - 2, 4):
-        t = abs(x - (x0 + x1) / 2) / ((x1 - x0) / 2)
-        ys = ytop + t * (ybot - ytop)
-        d.line([(x, ys + 1), (x, ybot)], fill=ROOF_DARK + (150,), width=1)
-
-
-def paint_estate(tier, gate):
-    W, H = 96, 80
-    img = canvas(W, H, [8, 64, 88, 74])
-    d = ImageDraw.Draw(img)
-    big = tier == 3
-    back = gate is None
-    gx = 41 if gate == "c" else 66  # 门洞左缘（r 用 66，l 镜像后等效）
-
-    if big:  # 门前花木（先画，墙会遮住根部）
-        for tx in (4, 82):
-            d.ellipse([tx, 50, tx + 10, 62], fill=GREEN + (220,), outline=INK)
-
-    # 两厢（先画，被正房压住内缘）
-    gable_roof(d, 0, 30, 34, 42, ROOF_DARK)
-    gable_roof(d, 62, 30, 96, 42, ROOF_DARK)
-    for wx in (8, 62):  # 厢房墙
-        d.rectangle([wx, 42, wx + 28, 58], fill=BRICK, outline=INK)
-        d.rectangle([wx + 10, 46, wx + 18, 54], fill=(210, 200, 180), outline=INK)
-        d.line([(wx + 14, 46), (wx + 14, 54)], fill=INK)
-
-    # 正房：大屋顶占上半部 + 青砖墙
-    gable_roof(d, 16, 10 if big else 14, 80, 34, ROOF)
-    if big:  # 重檐
-        gable_roof(d, 30, 2, 66, 12, ROOF_DARK)
-    d.rectangle([24, 34, 72, 58], fill=BRICK, outline=INK)
-    for x in range(28, 70, 8):  # 砖缝
-        d.line([(x, 36), (x, 56)], fill=BRICK_DK + (110,), width=1)
-    if back:
-        for wx in (32, 56):
-            d.rectangle([wx, 42, wx + 8, 50], fill=(210, 200, 180), outline=INK)
-            d.line([(wx + 4, 42), (wx + 4, 50)], fill=INK)
-    else:
-        d.rectangle([42, 44, 54, 58], fill=WOOD, outline=INK)  # 正房门
-        d.line([(48, 44), (48, 58)], fill=INK)
-        for wx in (29, 60):
-            d.rectangle([wx, 44, wx + 7, 51], fill=(210, 200, 180), outline=INK)
-
-    # 前围墙（矮，压底）+ 瓦檐压顶
-    d.rectangle([2, 58, 94, 72], fill=BRICK_DK, outline=INK)
-    d.line([(2, 58), (94, 58)], fill=ROOF_DARK, width=3)
-    for x in range(10, 94, 8):
-        d.line([(x, 62), (x, 70)], fill=INK + (70,), width=1)
-    if back:
-        for wx in (20, 68):
-            d.rectangle([wx, 62, wx + 8, 70], fill=(210, 200, 180), outline=INK)
-    else:
-        d.rectangle([gx, 58, gx + 14, 72], fill=(60, 50, 40), outline=INK)  # 门洞
-        d.line([(gx + 7, 58), (gx + 7, 72)], fill=INK)
-        gable_roof(d, gx - 3, 46, gx + 17, 58, ROOF)  # 门楼小顶
-
-    if gate == "l":
-        img = img.transpose(Image.FLIP_LEFT_RIGHT)
-    return img
-
-
-GATES = ["c", "r", None, "l"]
-for i, gate in enumerate(GATES):
-    save(paint_estate(2, gate), f"estate2_d{i}.png")
-    save(paint_estate(3, gate), f"estate3_d{i}.png")
-
-
-# ---------- 新作物田（32x32 贴地，仿 farm.png 肌理） ----------
 def paint_field(kind):
-    img = paper(32)
+    size = 48
+    img = paper(size)
     d = ImageDraw.Draw(img, "RGBA")
-    d.rectangle([0, 0, 31, 31], fill=SOIL + (90,))
-    for y in range(2, 32, 4):
-        d.line([(0, y), (31, y)], fill=(96, 70, 44, 70), width=1)
-    img = img.filter(ImageFilter.GaussianBlur(0.4))
+    d.rectangle([0, 0, size - 1, size - 1], fill=SOIL + (110,))
+    for y in range(3, size, 6):
+        d.line([(0, y), (size - 1, y)], fill=(96, 70, 44, 80), width=1)
+    for y in range(6, size, 6):
+        d.line([(0, y), (size - 1, y)], fill=(206, 170, 118, 60), width=1)
+    img = img.filter(ImageFilter.GaussianBlur(0.5))
     d = ImageDraw.Draw(img, "RGBA")
-    if kind == "wheat":  # 麦：金黄麦秆
-        for _ in range(26):
-            x, y = rng.randint(1, 30), rng.randint(1, 30)
-            d.line([(x, y), (x + rng.randint(-1, 1), y - 3)], fill=(214, 178, 90, 230), width=1)
-            d.point([(x, y - 3)], fill=(236, 206, 128, 240))
-    elif kind == "cotton":  # 棉：绿秆白桃
-        for _ in range(16):
-            x, y = rng.randint(2, 29), rng.randint(2, 29)
-            d.line([(x, y), (x, y - 2)], fill=GREEN_DARK + (220,), width=1)
-            d.ellipse([x - 2, y - 5, x + 2, y - 1], fill=(238, 236, 226, 235), outline=INK)
-    elif kind == "soy":  # 豆：矮绿丛黄豆荚
-        for _ in range(24):
-            x, y = rng.randint(1, 30), rng.randint(1, 30)
-            d.line([(x, y), (x, y - 2)], fill=GREEN + (220,), width=1)
+    if kind == "farm":  # 水稻：绿秧成行
+        for y in range(4, size, 6):
+            for x in range(2, size, 4):
+                d.line([(x, y), (x, y - 3)], fill=GREEN + (230,), width=1)
+                d.point([(x - 1, y - 2)], fill=GREEN_DARK + (220,))
+    elif kind == "wheat":
+        for _ in range(52):
+            x, y = rng.randint(2, size - 3), rng.randint(2, size - 3)
+            d.line([(x, y), (x + rng.randint(-1, 1), y - 4)], fill=(214, 178, 90, 230), width=1)
+            d.point([(x, y - 4)], fill=(236, 206, 128, 240))
+    elif kind == "cotton":
+        for _ in range(28):
+            x, y = rng.randint(3, size - 4), rng.randint(3, size - 4)
+            d.line([(x, y), (x, y - 3)], fill=GREEN_DARK + (220,), width=1)
+            d.ellipse([x - 3, y - 7, x + 3, y - 1], fill=(238, 236, 226, 235), outline=INK)
+    elif kind == "soy":
+        for _ in range(40):
+            x, y = rng.randint(2, size - 3), rng.randint(2, size - 3)
+            d.line([(x, y), (x, y - 3)], fill=GREEN + (220,), width=1)
             d.point([(x - 1, y - 1)], fill=(206, 198, 110, 240))
             d.point([(x + 1, y)], fill=(188, 182, 96, 220))
-    elif kind == "grape":  # 葡萄：深绿藤架紫果
-        for _ in range(14):
-            x, y = rng.randint(2, 29), rng.randint(2, 29)
-            d.line([(x, y), (x, y - 3)], fill=GREEN_DARK + (230,), width=1)
-            d.ellipse([x - 1, y - 2, x + 3, y + 1], fill=(96, 62, 108, 235), outline=INK)
-    return img
+    elif kind == "grape":
+        for _ in range(22):
+            x, y = rng.randint(3, size - 4), rng.randint(3, size - 4)
+            d.line([(x, y), (x, y - 4)], fill=GREEN_DARK + (230,), width=1)
+            d.ellipse([x - 1, y - 3, x + 4, y + 1], fill=(96, 62, 108, 235), outline=INK)
+    return img.convert("RGBA")
 
 
-for kind in ("wheat", "cotton", "soy", "grape"):
+for kind in ("farm", "wheat", "cotton", "soy", "grape"):
     save(paint_field(kind), f"{kind}.png")
 
 
-# ---------- 新商业/工业建筑（立牌 4 方向） ----------
-def paint_winery(door, flag_side):
-    S = 64
-    img = canvas(S, S, [6, 48, 58, 58])
-    d = ImageDraw.Draw(img)
-    d.rectangle([12, 30, 50, 50], fill=(238, 230, 210), outline=INK)
-    d.polygon([(4, 30), (20, 15), (42, 15), (58, 30)], fill=ROOF)
-    d.line([(4, 30), (20, 15), (42, 15), (58, 30), (4, 30)], fill=INK)
-    if door is not None:
-        dx = {"c": 26, "l": 16, "r": 36}[door]
-        d.rectangle([dx, 38, dx + 8, 50], fill=WOOD, outline=INK)
-    # 酒坛：赭红酒瓮 + 泥封
-    jx = 44 if flag_side != "l" else 6
-    d.ellipse([jx, 40, jx + 14, 54], fill=(146, 74, 56), outline=INK)
-    d.ellipse([jx + 4, 38, jx + 10, 44], fill=(170, 96, 70), outline=INK)
-    if flag_side is not None:
-        fx = 56 if flag_side == "r" else 8
-        d.line([(fx, 46), (fx, 12)], fill=INK, width=2)
-        bx0, bx1 = (fx, fx + 7) if flag_side == "r" else (fx - 7, fx)
-        d.polygon([(bx0, 12), (bx1, 14), (bx1, 28), (bx0, 26)], fill=(150, 44, 40))
-        d.ellipse([(bx0 + bx1) // 2 - 2, 17, (bx0 + bx1) // 2 + 2, 22], fill=(238, 232, 220))
-    return img.resize((32, 32), Image.LANCZOS)
+# ---------- 树（60x84）与行人（18x30） ----------
 
-
-def paint_oilpress(door, jar_side):
-    S = 64
-    img = canvas(S, S, [6, 48, 58, 58])
-    d = ImageDraw.Draw(img)
-    d.rectangle([12, 30, 50, 50], fill=(238, 230, 210), outline=INK)
-    d.polygon([(4, 30), (20, 15), (42, 15), (58, 30)], fill=THATCH)
-    d.line([(4, 30), (20, 15), (42, 15), (58, 30), (4, 30)], fill=INK)
-    if door is not None:
-        dx = {"c": 26, "l": 16, "r": 36}[door]
-        d.rectangle([dx, 38, dx + 8, 50], fill=WOOD, outline=INK)
-    # 榨油架：立柱 + 压梁 + 油瓶
-    px = 46 if jar_side != "l" else 4
-    d.line([(px, 52), (px, 34)], fill=INK, width=3)
-    d.line([(px, 34), (px + 10, 34)], fill=INK, width=3)
-    d.line([(px + 10, 34), (px + 10, 42)], fill=INK, width=2)
-    d.ellipse([px + 5, 44, px + 13, 52], fill=(120, 96, 54), outline=INK)
-    d.line([(px + 9, 42), (px + 9, 44)], fill=(120, 96, 54), width=2)
-    return img.resize((32, 32), Image.LANCZOS)
-
-
-def paint_loom(door, rack_side):
-    S = 64
-    img = canvas(S, S, [8, 50, 56, 60])
-    d = ImageDraw.Draw(img)
-    d.rectangle([14, 34, 50, 52], fill=WALL, outline=INK)
-    d.polygon([(6, 34), (20, 20), (44, 20), (58, 34)], fill=ROOF)
-    d.line([(6, 34), (20, 20), (44, 20), (58, 34), (6, 34)], fill=INK)
-    if door is not None:
-        dx = {"c": 28, "l": 16, "r": 36}[door]
-        d.rectangle([dx, 40, dx + 8, 52], fill=WOOD, outline=INK)
-    # 布架：两柱间挂两匹彩布
-    if rack_side is not None:
-        rx = 42 if rack_side == "r" else 4
-        d.line([(rx, 52), (rx, 28)], fill=INK, width=2)
-        d.line([(rx + 14, 52), (rx + 14, 28)], fill=INK, width=2)
-        d.rectangle([rx, 30, rx + 6, 46], fill=(172, 62, 52), outline=INK)
-        d.rectangle([rx + 8, 30, rx + 14, 46], fill=(96, 108, 122), outline=INK)
-    return img.resize((32, 32), Image.LANCZOS)
-
-
-def paint_grocer(door, sack_side):
-    S = 64
-    img = canvas(S, S, [6, 48, 58, 58])
-    d = ImageDraw.Draw(img)
-    for px in (14, 46):
-        d.line([(px, 24), (px, 46)], fill=INK, width=3)
-    d.polygon([(8, 24), (52, 24), (48, 16), (12, 16)], fill=(238, 232, 220))
-    for sx in range(10, 52, 7):
-        d.line([(sx, 16), (sx - 2, 24)], fill=(146, 94, 62), width=3)
-    d.line([(8, 24), (52, 24)], fill=INK)
-    d.rectangle([12, 40, 50, 47], fill=(168, 128, 88), outline=INK)
-    # 米面粮袋：两只鼓囊的口袋
-    if sack_side is not None:
-        bx = 6 if sack_side == "l" else 46
-        d.ellipse([bx, 42, bx + 12, 54], fill=(214, 196, 160), outline=INK)
-        d.line([(bx + 2, 44), (bx + 10, 44)], fill=INK + (120,))
-        d.ellipse([bx + (10 if sack_side == "l" else -12), 44, bx + (20 if sack_side == "l" else -2), 54],
-                  fill=(196, 170, 128), outline=INK)
-    if door is None:
-        d.rectangle([24, 26, 36, 33], fill=(210, 200, 180), outline=INK)
-    return img.resize((32, 32), Image.LANCZOS)
-
-
-def paint_restaurant(door, lantern_side):
-    S = 64
-    img = canvas(S, S, [4, 44, 60, 60])
-    d = ImageDraw.Draw(img)
-    # 两层酒楼：下层面铺 + 上层雅阁 + 大招牌
-    d.rectangle([10, 36, 54, 52], fill=(238, 230, 210), outline=INK)
-    d.rectangle([16, 22, 48, 36], fill=(238, 230, 210), outline=INK)
-    d.polygon([(6, 22), (18, 10), (46, 10), (58, 22)], fill=ROOF)
-    d.line([(6, 22), (18, 10), (46, 10), (58, 22), (6, 22)], fill=INK)
-    d.polygon([(4, 36), (14, 26), (50, 26), (60, 36)], fill=ROOF_DARK)
-    d.line([(4, 36), (14, 26), (50, 26), (60, 36), (4, 36)], fill=INK)
-    if door is None:
-        d.rectangle([20, 28, 28, 35], fill=(210, 200, 180), outline=INK)
-        d.rectangle([36, 28, 44, 35], fill=(210, 200, 180), outline=INK)
-    else:
-        dx = {"c": 28, "l": 14, "r": 42}[door]
-        d.rectangle([dx, 42, dx + 8, 52], fill=WOOD, outline=INK)
-        d.rectangle([24, 28, 40, 34], fill=(210, 200, 180), outline=INK)
-    # 门口灯笼
-    if lantern_side is not None:
-        lx = 8 if lantern_side == "l" else 54
-        d.line([(lx, 36), (lx, 40)], fill=INK, width=2)
-        d.ellipse([lx - 3, 40, lx + 3, 48], fill=(196, 84, 60), outline=INK)
-        d.line([(lx, 48), (lx, 50)], fill=INK, width=1)
-    # 酒旗
-    d.line([(32, 10), (32, 2)], fill=INK, width=2)
-    d.polygon([(32, 2), (44, 4), (44, 12), (32, 10)], fill=(172, 62, 52), outline=INK)
-    d.line([(34, 6), (42, 7)], fill=(238, 232, 220))
-    return img.resize((32, 32), Image.LANCZOS)
-
-
-for i, door in enumerate(DOORS):
-    side4 = None if door is None else ("r" if i % 2 == 0 else "l")
-    save(paint_winery(door, side4), f"winery_d{i}.png")
-    save(paint_oilpress(door, side4), f"oilpress_d{i}.png")
-    save(paint_loom(door, side4), f"loom_d{i}.png")
-    save(paint_grocer(door, side4), f"grocer_d{i}.png")
-    save(paint_restaurant(door, side4), f"restaurant_d{i}.png")
-
-
-# ---------- 树与行人 ----------
-W, H = 40, 56
-t = canvas(W, H)
-d = ImageDraw.Draw(t)
-d.line([(20, 54), (19, 44), (21, 36), (19, 28)], fill=INK, width=3)
-d.line([(20, 44), (12, 36)], fill=INK, width=2)
-d.line([(20, 40), (28, 32)], fill=INK, width=2)
-
-
-def cluster(cx, cy, rx, ry):
+def cluster(d, cx, cy, rx, ry):
     pts = [(cx + int(rx * math.cos(a)), cy + int(ry * math.sin(a)))
            for a in [j * math.pi / 10 for j in range(20)]]
     d.polygon(pts, fill=GREEN + (235,))
@@ -559,25 +533,59 @@ def cluster(cx, cy, rx, ry):
         a = rng.uniform(0, math.pi * 2)
         x = cx + int(rx * 0.6 * math.cos(a))
         y = cy + int(ry * 0.6 * math.sin(a))
-        d.line([(x, y), (x + 2, y - 1)], fill=GREEN_DARK + (220,), width=1)
+        d.line([(x, y), (x + 3, y - 2)], fill=GREEN_DARK + (220,), width=1)
 
 
-cluster(20, 12, 13, 6)
-cluster(20, 19, 15, 6)
-cluster(10, 22, 7, 4)
-cluster(30, 21, 7, 4)
+t = canvas(60, 84)
+d = ImageDraw.Draw(t)
+ground_shadow(t, 30, 80, 22, 6)
+d.line([(30, 80), (28, 62), (31, 50), (28, 38)], fill=INK, width=4)
+d.line([(29, 64), (18, 52)], fill=INK, width=3)
+d.line([(30, 58), (42, 46)], fill=INK, width=3)
+cluster(d, 30, 16, 19, 9)
+cluster(d, 30, 27, 22, 9)
+cluster(d, 15, 32, 10, 6)
+cluster(d, 45, 31, 10, 6)
 save(t, "tree.png")
 
-VW, VH = 12, 20
-v = canvas(VW, VH)
+v = canvas(18, 30)
 d = ImageDraw.Draw(v)
 ROBE = (96, 106, 126)
-d.polygon([(6, 6), (3, 9), (2, 18), (10, 18), (9, 9)], fill=ROBE, outline=INK)
-d.line([(6, 9), (6, 17)], fill=INK + (120,), width=1)
-d.ellipse([3, 0, 9, 6], fill=(224, 192, 158), outline=INK)
-d.polygon([(3, 1), (9, 1), (8, 3), (4, 3)], fill=INK)
-d.line([(4, 18), (4, 19)], fill=INK)
-d.line([(8, 18), (8, 19)], fill=INK)
+d.polygon([(9, 9), (4, 13), (3, 27), (15, 27), (14, 13)], fill=ROBE, outline=INK)
+d.line([(9, 13), (9, 26)], fill=INK + (120,), width=1)
+d.ellipse([4, 0, 14, 10], fill=(224, 192, 158), outline=INK)
+d.polygon([(4, 1), (14, 1), (12, 4), (6, 4)], fill=INK)
+d.line([(6, 27), (6, 29)], fill=INK)
+d.line([(12, 27), (12, 29)], fill=INK)
 save(v, "villager.png")
 
+
+# ---------- 尺寸校验 ----------
+SPEC = {"ground_0.png": (48, 48), "ground_1.png": (48, 48), "tree.png": (60, 84),
+        "villager.png": (18, 30), "well.png": (96, 96),
+        "farm.png": (48, 48), "wheat.png": (48, 48), "cotton.png": (48, 48),
+        "soy.png": (48, 48), "grape.png": (48, 48)}
+for i in range(4):
+    for base in ("hut", "house", "mill", "market", "grocer", "winery", "oilpress",
+                 "loom", "woodcutter", "restaurant", "clinic", "repair"):
+        SPEC[f"{base}_d{i}.png"] = (96, 96)
+    for tier in (2, 3):
+        SPEC[f"estate{tier}_d{i}.png"] = (144, 120)
+for name in ROAD_VARIANTS:
+    SPEC[f"road_{name}.png"] = (48, 48)
+
+bad = []
+for fname, want in SPEC.items():
+    p = os.path.join(OUT, fname)
+    if not os.path.exists(p):
+        bad.append(f"{fname} 缺失")
+        continue
+    got = Image.open(p).size
+    if got != want:
+        bad.append(f"{fname} = {got} 应为 {want}")
+if bad:
+    for b in bad:
+        print("尺寸错误:", b)
+    raise SystemExit(1)
+print(f"SIZE CHECK OK ({len(SPEC)} 个文件)")
 print("全部完成 ->", os.path.abspath(OUT))

@@ -21,7 +21,7 @@ extends Node2D
 
 const GRID_W := 40
 const GRID_H := 30
-const CELL := 32
+const CELL := 48
 const MAP_ORIGIN := Vector2(16, 16)
 const MONTH_SECONDS := 2.0
 
@@ -29,7 +29,7 @@ const ZOOM_MIN := 0.4
 const ZOOM_MAX := 3.0
 const ZOOM_STEP := 1.15
 const PAN_SPEED := 600.0  # 世界像素/秒
-const HUD_WIDTH := 284.0
+const HUD_WIDTH := 332.0  # 右侧三卡片导航栏宽 320 + 边距 12
 
 # 斜投影基向量：格子 (x,y) -> 世界 (x - y, (x + y) / 2)
 const ISO_X := Vector2(1, 0.5)
@@ -167,18 +167,25 @@ var hover_cell := Vector2i(-1, -1)
 var message := ""
 
 var _elapsed := 0.0
+var _anim_t := 0.0  # 动画时钟（水车/炊烟/行人/火灾），_process 累计
 var _dragging := false
 var _spawn_accum := 0.0
 
 var _rot := 0
 var _cam_pos := Vector2.ZERO
 var _zoom := Vector2.ONE
-# 大宅立牌偏移（按等级、旋转方向）：锚点为 2x2 地块中心，
-# 取贴图基座触地中心对齐地块中心略靠前 (0,+8)（45° 视角透视习惯）。
-# 各贴图触地中心逐图实测（alpha 通道），素材间不一致故逐图标定。
-const ESTATE_GROUND_OFF := {
-	2: [Vector2(-48, -68), Vector2(-37, -64), Vector2(-47, -60), Vector2(-57, -64)],
-	3: [Vector2(-47, -66), Vector2(-28, -62), Vector2(-47, -67), Vector2(-70, -60)],
+
+# 大宅/立牌贴图锚点约定：贴图底影椭圆中心 = (图宽/2, 图高-8)（生成脚本保证），
+# 偏移按贴图尺寸计算（_billboard_off / _estate_off），四方向同值，无需逐图标定。
+const ESTATE_GROUND_MARGIN := 8
+
+# 烟囱冒烟的建筑及其出烟点（相对建筑基座触地点的屏幕偏移，截图校订）
+# 冒烟建筑：烟圈起点（相对格原点=格底部中心，y 向上为负）
+const SMOKE_BUILDINGS := {
+	"mill": Vector2(16, -79),
+	"winery": Vector2(16, -77),
+	"oilpress": Vector2(-32, -77),
+	"restaurant": Vector2(17, -85),
 }
 
 # 建造菜单分类（法老王式）：一级为分类方块 + 道路/拆除，二级为分类内建筑
@@ -666,6 +673,7 @@ func _in_bounds(cell: Vector2i) -> bool:
 
 func _process(delta: float) -> void:
 	_update_view()
+	_anim_t += delta
 
 	_elapsed += delta
 	if _elapsed >= MONTH_SECONDS:
@@ -679,12 +687,10 @@ func _process(delta: float) -> void:
 	if not walkers.is_empty():
 		_update_walkers(delta)
 		_walker_label.text = "行人：%d" % walkers.size()
-		queue_redraw()
 
 	var new_hover := _screen_to_cell(_mouse_grid_pos())
 	if new_hover != hover_cell:
 		hover_cell = new_hover
-		queue_redraw()
 
 	var dir := Vector2.ZERO
 	if Input.is_key_pressed(KEY_LEFT) or Input.is_key_pressed(KEY_A):
@@ -697,7 +703,8 @@ func _process(delta: float) -> void:
 		dir.y += 1
 	if dir != Vector2.ZERO:
 		_cam_pos += dir.normalized() * PAN_SPEED * delta / _zoom.x
-		queue_redraw()
+
+	queue_redraw()  # 动画（水车/炊烟/行人/火灾）需要逐帧重绘
 
 
 func _recently_serviced(key: Vector2i) -> bool:
@@ -1846,6 +1853,58 @@ func _show_message(text: String) -> void:
 		_message_label.text = text
 
 
+# ---------- 立牌偏移与动画 ----------
+
+func _billboard_off(tex: Texture2D) -> Vector2:
+	## 立牌贴图偏移：水平居中，底部留 CELL/16 空隙（旧 32px 时代的 (-16,-30) 即此公式）
+	return Vector2(-tex.get_width() / 2.0, CELL / 16.0 - tex.get_height())
+
+
+func _estate_off(tex: Texture2D) -> Vector2:
+	## 大宅贴图偏移：底影中心（图宽/2, 图高-ESTATE_GROUND_MARGIN）对齐 2x2 地块中心
+	return Vector2(-tex.get_width() / 2.0, ESTATE_GROUND_MARGIN - tex.get_height())
+
+
+func _draw_smoke(origin: Vector2) -> void:
+	## 烟囱冒烟：3 个烟圈相位错开，渐大渐隐上浮（无状态，按 _anim_t 推算）
+	for k in 3:
+		var ph := fmod(_anim_t * 0.4 + k / 3.0, 1.0)
+		var r := 3.0 + 6.0 * ph
+		var p := origin + Vector2(sin(_anim_t * 1.7 + k * 2.1) * 3.0 * ph, -30.0 * ph)
+		var c := Color(0.48, 0.50, 0.54, 0.55 * (1.0 - ph))
+		draw_circle(p, r * 1.4, c)
+		draw_circle(p, r * 0.8, Color(0.72, 0.73, 0.76, 0.4 * (1.0 - ph)))   # 烟圈亮芯
+
+
+func _draw_waterwheel(side: float) -> void:
+	## 磨坊水车：圆环 + 8 辐条 + 叶片，匀速旋转（贴图不画水车，程序绘制）
+	var center := Vector2(side * 34.0, -36.0)
+	var r := 15.0
+	draw_arc(center, r, 0, TAU, 24, Color(0.32, 0.28, 0.24), 2.5)
+	draw_arc(center, r - 4.0, 0, TAU, 24, Color(0.32, 0.28, 0.24, 0.7), 1.5)
+	var a0 := _anim_t * 2.2 * -side  # 左右侧转向相反
+	for i in 8:
+		var a := a0 + i * PI / 4.0
+		var tip := center + Vector2(cos(a), sin(a)) * r
+		draw_line(center, tip, Color(0.4, 0.35, 0.3), 2.0)
+		var blade := tip + Vector2(cos(a + PI / 2.0), sin(a + PI / 2.0)) * 5.0
+		draw_line(tip, blade, Color(0.45, 0.4, 0.34), 3.0)
+	draw_circle(center, 2.5, Color(0.32, 0.28, 0.24))
+
+
+func _draw_flames(top_y: float) -> void:
+	## 火灾跳焰：3 簇火苗在立牌顶部抖动（橙底黄心双层三角）
+	for i in 3:
+		var fx := -18.0 + i * 18.0
+		var h := 12.0 + 7.0 * sin(_anim_t * 11.0 + i * 2.3)
+		var lean := 3.0 * sin(_anim_t * 7.0 + i * 1.7)
+		var base := Vector2(fx, top_y)
+		draw_colored_polygon([base + Vector2(-5, 0), base + Vector2(5, 0), base + Vector2(lean, -h)],
+			Color(0.95, 0.45, 0.15, 0.9))
+		draw_colored_polygon([base + Vector2(-2.5, 0), base + Vector2(2.5, 0), base + Vector2(lean * 0.6, -h * 0.55)],
+			Color(1.0, 0.85, 0.3, 0.95))
+
+
 # ---------- 绘制 ----------
 
 func _draw() -> void:
@@ -1899,29 +1958,34 @@ func _draw() -> void:
 				tint = Color(0.85, 0.55, 0.75)  # 郎中：紫红
 			elif wkind == 5:
 				tint = Color(0.98, 0.82, 0.35)  # 工匠：藤黄
-			draw_texture(villager_tex, Vector2(-6, -18), tint)
+			draw_texture(villager_tex, _billboard_off(villager_tex) + Vector2(0, -abs(sin(_anim_t * 8.0 + w.pos.x * 1.7 + w.pos.y)) * 2.0), tint)
 			draw_set_transform_matrix(Transform2D())
 			continue
 		if item[2] == "estate":
 			var anchor: Vector2i = item[1]
 			var tier: int = estates[anchor]
-			# 锚点：2x2 地块中心。立牌以屏幕轴绘制，若锚在前边线中点
-			# （1x1 惯例），宽贴图会整体偏左 32px、露出右半边空地；
-			# 大宅改为地块中心锚定，基座中心略靠前（+8）符合 45° 透视
+			# 锚点：2x2 地块中心，立牌底影中心对齐它（偏移按贴图尺寸计算）
 			var ecenter: Vector2 = _proj() * (MAP_ORIGIN + Vector2(anchor + Vector2i(1, 1)) * CELL)
 			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, ecenter))
 			var etex: Texture2D = estate_tex[tier][_rot]
-			draw_texture(etex, ESTATE_GROUND_OFF[tier][_rot])
+			draw_texture(etex, _estate_off(etex))
 			draw_set_transform_matrix(Transform2D())
 			continue
 		var cell: Vector2i = item[1]
 		var base: Vector2 = _proj() * (MAP_ORIGIN + Vector2(cell) * CELL + Vector2(CELL / 2, CELL))
 		draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, base))
 		if item[2] == "tree":
-			draw_texture(tree_tex, Vector2(-20, -54))
+			draw_texture(tree_tex, _billboard_off(tree_tex))
 		else:
+			var btex := _building_tex(item[2])
 			var btint := Color(1, 0.45, 0.35) if burning.has(cell) else Color.WHITE
-			draw_texture(_building_tex(item[2]), Vector2(-16, -30), btint)
+			draw_texture(btex, _billboard_off(btex), btint)
+			if item[2] == "mill":
+				_draw_waterwheel(1.0 if _rot % 2 == 0 else -1.0)
+			if SMOKE_BUILDINGS.has(item[2]) and not burning.has(cell):
+				_draw_smoke(SMOKE_BUILDINGS[item[2]])
+			if burning.has(cell):
+				_draw_flames(-btex.get_height() + 6.0)
 	draw_set_transform_matrix(Transform2D())
 
 	# 选中建筑高亮（金色框，大院描 2x2）
@@ -1955,5 +2019,6 @@ func _draw() -> void:
 				else:
 					var gbase: Vector2 = _proj() * (p0 + Vector2(CELL / 2, CELL))
 					draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, gbase))
-					draw_texture(_building_tex(selected_tool), Vector2(-16, -30), Color(1, 1, 1, 0.6))
+					var gtex2 := _building_tex(selected_tool)
+					draw_texture(gtex2, _billboard_off(gtex2), Color(1, 1, 1, 0.6))
 					draw_set_transform_matrix(Transform2D())
