@@ -86,6 +86,7 @@ python tools/gen_ai_assets.py --test                # 试生成一张到临时�
 ```bash
 python tools/cut_mill_wheel.py      # 磨坊水车：抠出转轮层/前景层，底图补洞
 python tools/cut_flags_banners.py   # 市集抹除静态三角旗；酒楼幌子抠为独立贴图
+python tools/gen_farm_stages.py     # 农田：从成熟田原图派生 幼苗/生长/茂盛/成熟 四阶段贴图
 ```
 
 重跑前需先 `git checkout -- assets/packs/gongbi` 还原原图（脚本基于原图标定）。

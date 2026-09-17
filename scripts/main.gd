@@ -10,6 +10,8 @@ extends Node2D
 ##     葡萄 -> 酒坊 -> 葡萄酒 ┴ 二级食品（宅院升级豪华大宅所需）。
 ##     棉花 -> 织布坊 -> 布匹，连同豆油/葡萄酒由市集售卖换金钱。
 ##     大米/面粉/豆油/葡萄酒各生产过一次后，商业解锁酒楼。
+##   农田：连片只需一格邻路即可整片耕种；4 个月一熟（幼苗->生长->茂盛->成熟
+##     贴图随月份变化），收获月一次性产出 4x 月产量；农夫在田块间走动劳作。
 ##   住房演进：茅屋(1格,4人) -> 瓦房(1格,8人) -> 宅院(2x2,32人) -> 豪华大宅(2x2,48人)。
 ##     条件：持续有行人服务 + 无饥荒；瓦房凑齐 2x2 空地自动合并为宅院。
 ##   建筑需邻接道路激活；行人（居民/挑夫/挑水夫/伐木工）沿路随机行走并服务相邻民居。
@@ -52,6 +54,10 @@ const EVOLVE_ESTATE := 4  # 宅院->豪华大宅所需达标月数
 const ESTATE_CAP := {2: 32, 3: 48}
 const HUT_CAP := 4
 const TILEHOUSE_CAP := 8
+
+# 农田：连片只需一格邻路即可整片耕种；FARM_CYCLE 个月一熟
+# （1 月播种 4 月收获），生长阶段 幼苗->生长->茂盛->成熟 可见
+const FARM_CYCLE := 4
 
 # 财政：按居所等级定的人均月税（金/人/月）与大院维护
 const TAX_RATE := {"hut": 0.12, "tilehouse": 0.25, 2: 0.4, 3: 0.6}
@@ -119,6 +125,8 @@ var buildings: Dictionary = {}  # Vector2i -> 类型（1 格建筑，含 hut/til
 var estates: Dictionary = {}  # 2x2 大院锚点 Vector2i -> 等级(2 宅院 / 3 豪华大宅)
 var grass: Dictionary = {}
 var trees: Dictionary = {}
+var farm_linked: Dictionary = {}  # 农田格 -> 是否与道路连通（连片只需一格邻路）
+var farm_grow: Dictionary = {}  # 农田格 -> 生长阶段 0幼苗/1生长/2茂盛/3待收
 
 var walkers: Array = []  # {pos, cur, nxt, t, left, prev, kind} kind: 0居民 1挑夫 2挑水夫 3伐木工 4郎中 5工匠
 var serviced: Dictionary = {}  # 居所(民居格或大院锚点) -> 最近服务月份序号
@@ -314,6 +322,11 @@ func _load_building_defs() -> void:
 				def["tex_dirs"].append(AssetLib.tex("%s_d%d.png" % [def["texture"], i]))
 		else:
 			def["tex"] = AssetLib.tex(def["texture"])
+		if def.has("crop"):
+			# 农田生长阶段贴图（tools/gen_farm_stages.py 生成）
+			def["tex_stages"] = []
+			for i in 4:
+				def["tex_stages"].append(AssetLib.tex("%s_s%d.png" % [String(def["texture"]).get_basename(), i]))
 
 
 func _building_tex(btype: String) -> Texture2D:
@@ -400,6 +413,28 @@ func _is_road(cell: Vector2i) -> bool:
 	return buildings.get(cell, "") == "road"
 
 
+func _is_farm(btype: String) -> bool:
+	return building_defs.get(btype, {}).has("crop")
+
+
+func _recompute_farm_connectivity() -> void:
+	## 连片农田：从邻路农田格出发沿农田 flood fill，整片连通即视为可耕种
+	farm_linked.clear()
+	var queue: Array[Vector2i] = []
+	for cell: Vector2i in buildings:
+		if _is_farm(buildings[cell]) and _has_adjacent_road(cell):
+			queue.append(cell)
+	while not queue.is_empty():
+		var c: Vector2i = queue.pop_back()
+		if farm_linked.has(c):
+			continue
+		if not _is_farm(buildings.get(c, "")):
+			continue
+		farm_linked[c] = true
+		for dir: Vector2i in DIRS:
+			queue.append(c + dir)
+
+
 func _estate_anchor_at(cell: Vector2i) -> Vector2i:
 	## 返回覆盖该格的大院锚点，无则 (-1,-1)
 	for anchor: Vector2i in estates:
@@ -475,10 +510,20 @@ func _spawn_walkers() -> void:
 					break
 			if spawned:
 				break
+	# 连片农田上的农夫：在田块间走动劳作（法老王式田间氛围）
+	var plots: Array[Vector2i] = []
+	for cell: Vector2i in farm_linked:
+		plots.append(cell)
+	var farmers := mini(maxi(1, plots.size() / 6), 4)
+	for i in farmers:
+		if walkers.size() >= WALKER_MAX or plots.is_empty():
+			break
+		var c: Vector2i = plots[randi() % plots.size()]
+		_spawn_walker_from(c, c, 6)
 
 
 func _spawn_walker_from(start: Vector2i, home: Variant, kind: int) -> void:
-	var next := _choose_next_road(start, home)
+	var next := _choose_next_road(start, home, kind)
 	if next == Vector2i(-1, -1):
 		return
 	walkers.append({
@@ -499,16 +544,27 @@ func _spawn_walker_from(start: Vector2i, home: Variant, kind: int) -> void:
 		_repair_around(start)
 
 
-func _choose_next_road(cur: Vector2i, prev: Variant) -> Vector2i:
+func _choose_next_road(cur: Vector2i, prev: Variant, kind: int = 0) -> Vector2i:
 	var options: Array[Vector2i] = []
-	for nb: Vector2i in _road_neighbors(cur):
+	for nb: Vector2i in _walk_neighbors(cur, kind):
 		if nb != prev:
 			options.append(nb)
 	if options.is_empty():
-		options = _road_neighbors(cur)
+		options = _walk_neighbors(cur, kind)
 	if options.is_empty():
 		return Vector2i(-1, -1)
 	return options[randi() % options.size()]
+
+
+func _walk_neighbors(cell: Vector2i, kind: int) -> Array[Vector2i]:
+	## 行人可达邻格：农夫（kind 6）在连片农田间走动，其余行人走道路
+	if kind == 6:
+		var result: Array[Vector2i] = []
+		for dir: Vector2i in DIRS:
+			if _is_farm(buildings.get(cell + dir, "")):
+				result.append(cell + dir)
+		return result
+	return _road_neighbors(cell)
 
 
 func _service_around(road_cell: Vector2i, is_water: bool = false) -> void:
@@ -575,7 +631,7 @@ func _update_walkers(delta: float) -> void:
 				_doctor_around(w.cur)
 			elif wkind == 5:
 				_repair_around(w.cur)
-			var next: Vector2i = _choose_next_road(w.cur, w.prev)
+			var next: Vector2i = _choose_next_road(w.cur, w.prev, wkind)
 			w.prev = w.cur
 			if next == Vector2i(-1, -1) or w.left <= 0:
 				walkers.remove_at(i)
@@ -657,6 +713,7 @@ func _try_place(cell: Vector2i) -> void:
 	if not debug_mode:
 		gold -= int(def["cost_gold"])
 	buildings[cell] = selected_tool
+	_recompute_farm_connectivity()
 	_refresh_capacity()
 	_show_message("建造了 %s" % def["name"])
 	Sound.play("build")
@@ -681,6 +738,7 @@ func _try_demolish(cell: Vector2i) -> void:
 		serviced.erase(cell)
 		evolve_prog.erase(cell)
 		building_cond.erase(cell)
+		farm_grow.erase(cell)
 		gold += refund
 		_show_message("拆除了 %s，返还 %d 金" % [building_defs[btype]["name"], refund])
 	elif trees.has(cell):
@@ -696,6 +754,7 @@ func _try_demolish(cell: Vector2i) -> void:
 		_show_message("这里没有可拆除的建筑")
 		return
 	Sound.play("demolish")
+	_recompute_farm_connectivity()
 	_refresh_capacity()
 	_update_hud()
 	queue_redraw()
@@ -864,6 +923,7 @@ func _events_month() -> void:
 				watered.erase(cell)
 				evolve_prog.erase(cell)
 				building_cond.erase(cell)
+				farm_grow.erase(cell)
 				_show_message("一场火灾烧毁了%s！" % building_defs[btype]["name"])
 	_refresh_capacity()
 	if locust_months_left > 0:
@@ -949,6 +1009,7 @@ func _note_produced(item: String, amount: float) -> void:
 
 func _advance_month() -> void:
 	_months_total += 1
+	_recompute_farm_connectivity()
 	_assign_jobs()
 
 	# 生产链：作物 -> 加工（磨坊/油坊/酒坊/织布坊）-> 粮油店/市集/酒楼
@@ -964,14 +1025,23 @@ func _advance_month() -> void:
 	for cell: Vector2i in buildings:
 		var btype: String = buildings[cell]
 		var def: Dictionary = building_defs.get(btype, {})
-		if not _has_adjacent_road(cell):
+		if _is_farm(btype):
+			# 连片农田：整片只需一格邻路；不连通的农田抛荒
+			if not farm_linked.get(cell, false):
+				continue
+		elif not _has_adjacent_road(cell):
 			continue
 		var eff := _work_efficiency(cell, def)
 		if eff <= 0.0:
 			continue
 		if def.has("crop"):
-			var mult := 0.5 if locust_months_left > 0 else 1.0
-			stock[def["crop"]] = float(stock[def["crop"]]) + float(def["crop_per_month"]) * mult * eff
+			# 生长周期：每月推进一阶段，满 FARM_CYCLE 月收获一次（产量 = 月产 x 周期）
+			var stage := int(farm_grow.get(cell, 0)) + 1
+			if stage >= FARM_CYCLE:
+				stage = 0
+				var mult := 0.5 if locust_months_left > 0 else 1.0
+				stock[def["crop"]] = float(stock[def["crop"]]) + float(def["crop_per_month"]) * FARM_CYCLE * mult * eff
+			farm_grow[cell] = stage
 		if def.has("wood_per_month"):
 			stock["wood"] = float(stock["wood"]) + float(def["wood_per_month"]) * eff
 		for cv: Dictionary in def.get("converts", []):
@@ -1235,7 +1305,7 @@ func _assign_jobs() -> void:
 			continue
 		jobs_total += jobs
 		var take := 0
-		if _has_adjacent_road(cell):
+		if _has_adjacent_road(cell) or farm_linked.get(cell, false):
 			take = mini(jobs, workforce)
 			workforce -= take
 		employed[cell] = take
@@ -1334,7 +1404,12 @@ func _refresh_info_panel() -> void:
 				lines.append("岗位：%d　在岗：%d（效率 %d%%）" % [jobs, on, int(_work_efficiency(key, def) * 100)])
 			lines.append("维护度：%d%%" % _cond_of(key))
 			if def.has("crop"):
-				lines.append("产出：每月 %d %s（需有人劳作）" % [int(def["crop_per_month"]), CROP_NAMES[def["crop"]]])
+				var stage := mini(int(farm_grow.get(cell, 0)), 3)
+				var sname: String = ["幼苗", "生长", "茂盛", "待收"][stage]
+				if farm_linked.get(cell, false):
+					lines.append("生长：%s（每 %d 月收获 %d %s）" % [sname, FARM_CYCLE, int(def["crop_per_month"]) * FARM_CYCLE, CROP_NAMES[def["crop"]]])
+				else:
+					lines.append("抛荒中：农田需连片且有一格邻路才能耕种")
 			if def.has("converts"):
 				var parts: Array = []
 				for cv: Dictionary in def["converts"]:
@@ -1419,6 +1494,9 @@ func _build_state() -> Dictionary:
 	var cond_list := []
 	for key: Vector2i in building_cond:
 		cond_list.append({"x": key.x, "y": key.y, "cond": building_cond[key]})
+	var grow_list := []
+	for cell: Vector2i in farm_grow:
+		grow_list.append({"x": cell.x, "y": cell.y, "stage": farm_grow[cell]})
 	return {
 		"population": population,
 		"paddy": paddy,
@@ -1448,6 +1526,7 @@ func _build_state() -> Dictionary:
 		"estates": estate_list,
 		"trees": tree_list,
 		"conds": cond_list,
+		"grows": grow_list,
 	}
 
 
@@ -1490,11 +1569,14 @@ func _apply_state(state: Dictionary) -> void:
 	burning.clear()
 	building_cond.clear()
 	employed.clear()
+	farm_grow.clear()
 	locust_months_left = 0
 	plague_months_left = int(state.get("plague", 0))
 	shortage_months = 0
 	for entry: Dictionary in state.get("conds", []):
 		building_cond[Vector2i(int(entry["x"]), int(entry["y"]))] = int(entry["cond"])
+	for entry: Dictionary in state.get("grows", []):
+		farm_grow[Vector2i(int(entry["x"]), int(entry["y"]))] = int(entry["stage"])
 	for entry: Dictionary in state["buildings"]:
 		var btype := String(entry["type"])
 		if not building_defs.has(btype):
@@ -1506,6 +1588,7 @@ func _apply_state(state: Dictionary) -> void:
 	for entry: Dictionary in state.get("trees", []):
 		trees[Vector2i(int(entry["x"]), int(entry["y"]))] = true
 	_refresh_capacity()
+	_recompute_farm_connectivity()
 	_assign_jobs()  # 读档后 employed 已清空，必须重新分配岗位
 	_update_hud()
 	_update_slot_btn()
@@ -2015,6 +2098,10 @@ func _draw() -> void:
 			var ftint := Color(1, 0.45, 0.35) if burning.has(cell) else Color.WHITE
 			if btype == "road":
 				draw_texture(_road_tex(cell), MAP_ORIGIN + Vector2(cell) * CELL)
+			elif _is_farm(btype):
+				# 农田按生长阶段选贴图（幼苗/生长/茂盛/成熟）
+				var stages: Array = building_defs[btype]["tex_stages"]
+				draw_texture(stages[mini(int(farm_grow.get(cell, 0)), 3)], MAP_ORIGIN + Vector2(cell) * CELL, ftint)
 			else:
 				draw_texture(_building_tex(btype), MAP_ORIGIN + Vector2(cell) * CELL, ftint)
 
@@ -2049,6 +2136,8 @@ func _draw() -> void:
 				tint = Color(0.85, 0.55, 0.75)  # 郎中：紫红
 			elif wkind == 5:
 				tint = Color(0.98, 0.82, 0.35)  # 工匠：藤黄
+			elif wkind == 6:
+				tint = Color(0.72, 0.58, 0.36)  # 农夫：草帽褐
 			var vsz: Vector2 = villager_tex.get_size() * WALKER_SCALE
 			var bob := absf(sin(_anim_t * 8.0 + w.pos.x * 1.7 + w.pos.y)) * 2.0
 			draw_texture_rect(villager_tex, Rect2(Vector2(-vsz.x / 2, CELL / 16.0 - vsz.y - bob), vsz), false, tint)
