@@ -43,6 +43,7 @@ const WALK_SPEED := 2.5  # 格/秒
 const WALKER_STEPS := 20
 const WALKER_MAX := 80
 const SPAWN_INTERVAL := 3.0
+const WALKER_SCALE := 2.0  # 行人贴图放大倍数（原图 18x30，直接显示太小看不清）
 
 # 住房演进参数
 const EVOLVE_HUT := 3  # 茅屋->瓦房所需达标月数
@@ -175,19 +176,12 @@ var _rot := 0
 var _cam_pos := Vector2.ZERO
 var _zoom := Vector2.ONE
 
-# 大宅/立牌贴图锚点约定：贴图底影中心 = (图宽/2, 图高-8)（AI 重绘素材保证），
+# 立牌/大宅贴图锚点约定：贴图底影中心 = (图宽/2, 图高-8)（AI 素材已逐张校验，四方向一致），
 # 偏移按贴图尺寸计算（_billboard_off / _estate_off）。
-# 但 AI 四方向贴图的底座构图各不相同（白/草地底座在画布内的位置随方向变化），
-# 同一公式四方向无法同时对齐，故按视角 _rot 查表（格子坐标，截图逐方向校订）。
+# 锚点四方向恒定：菱形地砖旋转 90° 后与自身重合，单格建筑取格子中心、大院取 2x2 地块中心。
 const ESTATE_GROUND_MARGIN := 8
-const BILLBOARD_ANCHORS := [Vector2(1.0, 0.5), Vector2(0.72, -0.45),
-	Vector2(-0.17, -0.47), Vector2(-0.45, 0.72)]
-const TREE_ANCHOR := Vector2(0.5, 0.5)  # 树干落点 = 格子中心，四方向恒定
-const ESTATE_ANCHORS := [Vector2(1.0, 1.55), Vector2(2.28, -0.57),
-	Vector2(0.38, 0.54), Vector2(-0.57, 2.28)]
-# 豪华大宅底座构图与宅院不同，单独校订
-const ESTATE3_ANCHORS := [Vector2(1.1, 2.08), Vector2(1.73, -0.22),
-	Vector2(-0.34, 0.94), Vector2(-0.22, 1.73)]
+const BILLBOARD_ANCHOR := Vector2(0.5, 0.5)
+const ESTATE_CENTER := Vector2(1.0, 1.0)
 
 # 烟囱冒烟的建筑及其出烟点（相对建筑基座触地点的屏幕偏移，截图校订）
 # 冒烟建筑：烟圈起点（相对格原点=格底部中心，y 向上为负）；仅贴图带烟囱的建筑
@@ -1950,24 +1944,24 @@ func _draw() -> void:
 				tint = Color(0.85, 0.55, 0.75)  # 郎中：紫红
 			elif wkind == 5:
 				tint = Color(0.98, 0.82, 0.35)  # 工匠：藤黄
-			draw_texture(villager_tex, _billboard_off(villager_tex) + Vector2(0, -abs(sin(_anim_t * 8.0 + w.pos.x * 1.7 + w.pos.y)) * 2.0), tint)
+			var vsz: Vector2 = villager_tex.get_size() * WALKER_SCALE
+			var bob := absf(sin(_anim_t * 8.0 + w.pos.x * 1.7 + w.pos.y)) * 2.0
+			draw_texture_rect(villager_tex, Rect2(Vector2(-vsz.x / 2, CELL / 16.0 - vsz.y - bob), vsz), false, tint)
 			draw_set_transform_matrix(Transform2D())
 			continue
 		if item[2] == "estate":
 			var anchor: Vector2i = item[1]
 			var tier: int = estates[anchor]
-			# 锚点：2x2 地块上的落点随视角查表（AI 四方向底座构图不同，见 ESTATE_ANCHORS）
-			var ecenter: Vector2 = _proj() * (MAP_ORIGIN + (Vector2(anchor) + (ESTATE_ANCHORS if tier == 2 else ESTATE3_ANCHORS)[_rot]) * CELL)
+			# 锚点 = 2x2 地块中心，四方向恒定（见 ESTATE_CENTER 注释）
+			var ecenter: Vector2 = _proj() * (MAP_ORIGIN + (Vector2(anchor) + ESTATE_CENTER) * CELL)
 			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, ecenter))
 			var etex: Texture2D = estate_tex[tier][_rot]
 			draw_texture(etex, _estate_off(etex))
 			draw_set_transform_matrix(Transform2D())
 			continue
 		var cell: Vector2i = item[1]
-		# 立牌基座落点随视角查表（AI 四方向底座构图不同，见 BILLBOARD_ANCHORS）；
-		# 树木无方向贴图且树干为点状落点，恒定取格子中心
-		var anchor: Vector2 = TREE_ANCHOR if item[2] == "tree" else BILLBOARD_ANCHORS[_rot]
-		var base: Vector2 = _proj() * (MAP_ORIGIN + (Vector2(cell) + anchor) * CELL)
+		# 立牌基座落点 = 格子中心，树木与建筑一致（见 BILLBOARD_ANCHOR 注释）
+		var base: Vector2 = _proj() * (MAP_ORIGIN + (Vector2(cell) + BILLBOARD_ANCHOR) * CELL)
 		draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, base))
 		if item[2] == "tree":
 			draw_texture(tree_tex, _billboard_off(tree_tex))
@@ -2010,7 +2004,7 @@ func _draw() -> void:
 					var gtex: Texture2D = road_tex["o"] if selected_tool == "road" else _building_tex(selected_tool)
 					draw_texture(gtex, p0, Color(1, 1, 1, 0.6))
 				else:
-					var gbase: Vector2 = _proj() * (p0 + BILLBOARD_ANCHORS[_rot] * CELL)
+					var gbase: Vector2 = _proj() * (p0 + BILLBOARD_ANCHOR * CELL)
 					draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, gbase))
 					var gtex2 := _building_tex(selected_tool)
 					draw_texture(gtex2, _billboard_off(gtex2), Color(1, 1, 1, 0.6))
