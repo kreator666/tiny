@@ -176,10 +176,11 @@ var _rot := 0
 var _cam_pos := Vector2.ZERO
 var _zoom := Vector2.ONE
 
-# 立牌/大宅贴图锚点约定：贴图底影中心 = (图宽/2, 图高-8)（AI 素材已逐张校验，四方向一致），
-# 偏移按贴图尺寸计算（_billboard_off / _estate_off）。
-# 锚点四方向恒定：菱形地砖旋转 90° 后与自身重合，单格建筑取格子中心、大院取 2x2 地块中心。
-const ESTATE_GROUND_MARGIN := 8
+# 立牌/大宅贴图锚点：贴图里建筑立在白色基座平台上，平台 = 地块的脚印，
+# 应对齐地块菱形中心（锚点 = 格子中心 / 2x2 地块中心，四方向恒定）。
+# 但各素材平台在画布内的垂直位置不一，运行时从 alpha 通道实测（_ground_anchor），
+# 树木/行人无平台，以贴图底部中心为落点（_base_off）。
+const GROUND_SLAB := 28.0  # 基座平台典型厚度（像素），锚点 = 平台下缘行 - SLAB/2
 const BILLBOARD_ANCHOR := Vector2(0.5, 0.5)
 const ESTATE_CENTER := Vector2(1.0, 1.0)
 
@@ -1857,14 +1858,43 @@ func _show_message(text: String) -> void:
 
 # ---------- 立牌偏移与动画 ----------
 
+var _anchor_cache := {}
+
+
+func _ground_anchor(tex: Texture2D) -> Vector2:
+	## 贴图地面落点（画布坐标）：自下而上找首行致密不透明行 = 基座平台下缘
+	## （下方稀疏行是软阴影，跳过），平台中心即锚点。结果按贴图缓存。
+	if _anchor_cache.has(tex):
+		return _anchor_cache[tex]
+	var img := tex.get_image()
+	var w := img.get_width()
+	var gy := img.get_height() - 1
+	for y in range(img.get_height() - 1, -1, -1):
+		var n := 0
+		for x in w:
+			if img.get_pixel(x, y).a > 0.4:
+				n += 1
+		if n * 4 >= w:
+			gy = y
+			break
+	var anchor := Vector2(w / 2.0, gy - GROUND_SLAB / 2.0)
+	_anchor_cache[tex] = anchor
+	return anchor
+
+
 func _billboard_off(tex: Texture2D) -> Vector2:
-	## 立牌贴图偏移：水平居中，底部留 CELL/16 空隙（旧 32px 时代的 (-16,-30) 即此公式）
-	return Vector2(-tex.get_width() / 2.0, CELL / 16.0 - tex.get_height())
+	## 立牌贴图偏移：基座平台中心对齐锚点（格子中心）
+	return -_ground_anchor(tex)
+
+
+func _base_off(tex: Texture2D) -> Vector2:
+	## 无平台贴图（树/行人）偏移：贴图底部中心对齐锚点
+	return Vector2(-tex.get_width() / 2.0, -tex.get_height())
 
 
 func _estate_off(tex: Texture2D) -> Vector2:
-	## 大宅贴图偏移：底影中心（图宽/2, 图高-ESTATE_GROUND_MARGIN）对齐 2x2 地块中心
-	return Vector2(-tex.get_width() / 2.0, ESTATE_GROUND_MARGIN - tex.get_height())
+	## 大宅贴图偏移：基座平台中心对齐 2x2 地块中心
+	return -_ground_anchor(tex)
 
 
 func _draw_smoke(origin: Vector2) -> void:
@@ -1894,10 +1924,10 @@ func _draw_flames(top_y: float) -> void:
 # ---------- 绘制 ----------
 
 func _draw() -> void:
-	var world_size := get_viewport_rect().size / _zoom.x
-	var top_left := _cam_pos - world_size / 2
-	draw_set_transform_matrix(Transform2D(Vector2(_zoom.x, 0), Vector2(0, _zoom.y), Vector2.ZERO))
-	draw_rect(Rect2(top_left, world_size), Color(0.13, 0.12, 0.10))
+	# 深色背景：必须画在屏幕空间。若经过节点投影变换（_proj），
+	# 背景会被斜切/旋转，缩放或转向后与地图错位
+	draw_set_transform_matrix(get_global_transform_with_canvas().affine_inverse())
+	draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color(0.13, 0.12, 0.10))
 	draw_set_transform_matrix(Transform2D())
 
 	# 地面层：草地 + 贴地建筑
@@ -1964,15 +1994,17 @@ func _draw() -> void:
 		var base: Vector2 = _proj() * (MAP_ORIGIN + (Vector2(cell) + BILLBOARD_ANCHOR) * CELL)
 		draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, base))
 		if item[2] == "tree":
-			draw_texture(tree_tex, _billboard_off(tree_tex))
+			draw_texture(tree_tex, _base_off(tree_tex))
 		else:
 			var btex := _building_tex(item[2])
+			var boff := _billboard_off(btex)
 			var btint := Color(1, 0.45, 0.35) if burning.has(cell) else Color.WHITE
-			draw_texture(btex, _billboard_off(btex), btint)
+			draw_texture(btex, boff, btint)
 			if SMOKE_BUILDINGS.has(item[2]) and not burning.has(cell):
-				_draw_smoke(SMOKE_BUILDINGS[item[2]])
+				# 冒烟点按旧触地点（贴图底部中心）校订，补上贴图下沉量
+				_draw_smoke(SMOKE_BUILDINGS[item[2]] + Vector2(0, btex.get_height() + boff.y))
 			if burning.has(cell):
-				_draw_flames(-btex.get_height() + 6.0)
+				_draw_flames(boff.y + 6.0)
 	draw_set_transform_matrix(Transform2D())
 
 	# 选中建筑高亮（金色框，大院描 2x2）
