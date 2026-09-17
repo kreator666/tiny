@@ -89,6 +89,9 @@ var tree_tex: Texture2D
 var villager_tex: Texture2D
 var road_tex: Dictionary = {}  # 方向键 -> Texture2D，键同 ROAD_KEYS
 var estate_tex: Dictionary = {}  # 等级 2/3 -> [d0..d3]
+var mill_wheel_tex: Array = []  # 水车转轮层 [d0..d3]（tools/cut_mill_wheel.py 生成）
+var mill_front_tex: Array = []  # 水车前景层（石柱/水流，保持静止）
+var rest_banner_tex: Array = []  # 酒楼幌子 [d0..d3]（tools/cut_flags_banners.py 生成）
 
 const ROAD_KEYS: Array = ["o", "n", "e", "s", "w", "ne", "ns", "nw", "es", "ew", "sw", "nes", "new", "nsw", "esw", "nesw"]
 
@@ -104,6 +107,10 @@ func _load_pack_textures() -> void:
 	for tier in [2, 3]:
 		for i in 4:
 			estate_tex[tier].append(AssetLib.tex("estate%d_d%d.png" % [tier, i]))
+	for i in 4:
+		mill_wheel_tex.append(AssetLib.tex("mill_wheel_d%d.png" % i))
+		mill_front_tex.append(AssetLib.tex("mill_front_d%d.png" % i))
+		rest_banner_tex.append(AssetLib.tex("rest_banner_d%d.png" % i))
 
 # ---------- 状态 ----------
 
@@ -184,12 +191,38 @@ const GROUND_SLAB := 28.0  # 基座平台典型厚度（像素），锚点 = 平
 const BILLBOARD_ANCHOR := Vector2(0.5, 0.5)
 const ESTATE_CENTER := Vector2(1.0, 1.0)
 
-# 烟囱冒烟的建筑及其出烟点（相对建筑基座触地点的屏幕偏移，截图校订）
-# 冒烟建筑：烟圈起点（相对格原点=格底部中心，y 向上为负）；仅贴图带烟囱的建筑
+# 冒烟的建筑及其出烟点（画布坐标相对 (宽/2, 高)，即旧触地点；运行时按基座锚点自动补偿）
+# 冒烟建筑：磨坊/酒坊/油坊有烟囱，民居与酒楼为厨房炊烟
 const SMOKE_BUILDINGS := {
 	"mill": Vector2(-19, -62),
 	"winery": Vector2(-13, -71),
+	"hut": Vector2(-6, -74),
+	"tilehouse": Vector2(-2, -72),
+	"oilpress": Vector2(-28, -44),
+	"restaurant": Vector2(7, -81),
 }
+
+# 磨坊水车（贴图静态轮已抠除，见 tools/cut_mill_wheel.py）：
+# 逐方向轮心（96x96 画布坐标，截图校订）；轮子与前景层绕轮心旋转/叠放
+const MILL_WHEEL := [Vector2(75, 57), Vector2(70, 55), Vector2(72, 52), Vector2(25, 55)]
+const WHEEL_SPEED := 0.6  # rad/s
+
+# 市集三角旗（静态旗已抹除，见 tools/cut_flags_banners.py）：
+# 逐方向 {旗杆顶挂点, 朝向(1右/-1左), 尺寸}（画布坐标）
+const MARKET_FLAG := [
+	{"at": Vector2(24, 4), "dir": 1.0, "size": Vector2(20, 7)},
+	{"at": Vector2(61, 3), "dir": 1.0, "size": Vector2(19, 8)},
+	{"at": Vector2(26, 3), "dir": 1.0, "size": Vector2(15, 6)},
+	{"at": Vector2(32, 3), "dir": -1.0, "size": Vector2(19, 7)},
+]
+
+# 酒楼幌子（已抠为独立贴图 rest_banner_dN）：逐方向顶部挂点（画布坐标）
+const REST_BANNER := [Vector2(12, 21), Vector2(62, 37), Vector2(13, 21), Vector2(40, 38)]
+
+# 昼夜交替：一昼夜 60 秒（纯氛围，不与月份历法挂钩）
+const DAY_SECONDS := 60.0
+# 夜间点灯的建筑（民居/商业/酒楼）
+const LIGHT_BUILDINGS := {"hut": 1, "tilehouse": 1, "market": 1, "restaurant": 1, "grocer": 1}
 
 # 建造菜单分类（法老王式）：一级为分类方块 + 道路/拆除，二级为分类内建筑
 const BUILD_MENU := {
@@ -1921,6 +1954,45 @@ func _draw_flames(top_y: float) -> void:
 			Color(1.0, 0.85, 0.3, 0.95))
 
 
+func _nightness() -> float:
+	## 夜晚程度 0(白天)..1(午夜)；一昼夜 DAY_SECONDS 秒
+	var b := 0.5 + 0.5 * sin(fmod(_anim_t / DAY_SECONDS, 1.0) * TAU)
+	return clampf((0.55 - b) / 0.55, 0.0, 1.0)
+
+
+func _duskness() -> float:
+	## 晨昏暖调强度：日夜交界附近为 1，正午/午夜为 0
+	var b := 0.5 + 0.5 * sin(fmod(_anim_t / DAY_SECONDS, 1.0) * TAU)
+	return clampf(1.0 - absf(b - 0.55) / 0.3, 0.0, 1.0)
+
+
+func _draw_flag(attach: Vector2, dir_sign: float, size: Vector2, cell: Vector2i) -> void:
+	## 市集三角旗：沿旗面正弦波动（贴图静态旗已抹除，程序重绘）
+	var segs := 6
+	var phase := _anim_t * 6.0 + cell.x * 1.1 + cell.y * 0.6
+	var top: Array = []
+	var bot: Array = []
+	for i in segs + 1:
+		var t := float(i) / segs
+		var wave := sin(phase - t * 5.0) * (0.5 + 2.0 * t)
+		var x := attach.x + dir_sign * size.x * t
+		var hh := size.y * (1.0 - 0.7 * t)
+		var yc := attach.y + wave + t * 2.0
+		top.append(Vector2(x, yc))
+		bot.append(Vector2(x, yc + hh))
+	bot.reverse()
+	draw_colored_polygon(top + bot, Color(0.82, 0.16, 0.12))
+
+
+func _draw_fire_smoke(top_y: float) -> void:
+	## 火灾黑烟柱：3 团浓烟从火焰上方升起，渐大渐隐（比炊烟更黑更大）
+	for k in 3:
+		var ph := fmod(_anim_t * 0.5 + k / 3.0, 1.0)
+		var r := 5.0 + 13.0 * ph
+		var p := Vector2(sin(_anim_t * 1.3 + k * 2.4) * 4.0 * ph, top_y - 8.0 - 42.0 * ph)
+		draw_circle(p, r, Color(0.12, 0.11, 0.12, 0.55 * (1.0 - ph)))
+
+
 # ---------- 绘制 ----------
 
 func _draw() -> void:
@@ -1929,6 +2001,9 @@ func _draw() -> void:
 	draw_set_transform_matrix(get_global_transform_with_canvas().affine_inverse())
 	draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color(0.13, 0.12, 0.10))
 	draw_set_transform_matrix(Transform2D())
+
+	var night := _nightness()
+	var lights: Array = []  # 夜间灯火点（世界坐标），夜色叠加后统一绘制
 
 	# 地面层：草地 + 贴地建筑
 	for cell: Vector2i in grass:
@@ -1988,6 +2063,11 @@ func _draw() -> void:
 			var etex: Texture2D = estate_tex[tier][_rot]
 			draw_texture(etex, _estate_off(etex))
 			draw_set_transform_matrix(Transform2D())
+			if night > 0.02:
+				# 大院夜间灯火：正房一点 + 两厢各一点
+				lights.append(ecenter + Vector2(0, -34))
+				lights.append(ecenter + Vector2(-30, -18))
+				lights.append(ecenter + Vector2(30, -18))
 			continue
 		var cell: Vector2i = item[1]
 		# 立牌基座落点 = 格子中心，树木与建筑一致（见 BILLBOARD_ANCHOR 注释）
@@ -2000,11 +2080,36 @@ func _draw() -> void:
 			var boff := _billboard_off(btex)
 			var btint := Color(1, 0.45, 0.35) if burning.has(cell) else Color.WHITE
 			draw_texture(btex, boff, btint)
+			if item[2] == "mill" and not burning.has(cell):
+				# 水车：转轮层绕轮心旋转，前景层（石柱/水流）静止覆盖
+				var wc: Vector2 = boff + MILL_WHEEL[_rot]
+				var wtex: Texture2D = mill_wheel_tex[_rot]
+				draw_set_transform_matrix((_proj().affine_inverse() * Transform2D(0, base)) * Transform2D(_anim_t * WHEEL_SPEED, wc))
+				draw_texture(wtex, -wtex.get_size() / 2, btint)
+				draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, base))
+				var ftex: Texture2D = mill_front_tex[_rot]
+				draw_texture(ftex, wc - ftex.get_size() / 2, btint)
+			elif item[2] == "market" and not burning.has(cell):
+				_draw_flag(boff + MARKET_FLAG[_rot]["at"], MARKET_FLAG[_rot]["dir"], MARKET_FLAG[_rot]["size"], cell)
+			elif item[2] == "restaurant" and not burning.has(cell):
+				# 幌子绕顶部挂点摆动（独立贴图保留"酒"字）
+				var btex2: Texture2D = rest_banner_tex[_rot]
+				var hang: Vector2 = boff + REST_BANNER[_rot]
+				var sway := sin(_anim_t * 2.1 + cell.x * 1.3 + cell.y * 0.7) * 0.07
+				draw_set_transform_matrix((_proj().affine_inverse() * Transform2D(0, base)) * Transform2D(sway, hang))
+				draw_texture(btex2, Vector2(-btex2.get_width() / 2.0, 0), btint)
+				draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, base))
 			if SMOKE_BUILDINGS.has(item[2]) and not burning.has(cell):
 				# 冒烟点按旧触地点（贴图底部中心）校订，补上贴图下沉量
 				_draw_smoke(SMOKE_BUILDINGS[item[2]] + Vector2(0, btex.get_height() + boff.y))
 			if burning.has(cell):
 				_draw_flames(boff.y + 6.0)
+				_draw_fire_smoke(boff.y + 6.0)
+			if night > 0.02 and LIGHT_BUILDINGS.has(item[2]):
+				# 夜间窗口灯火：位置按格坐标加抖动，避免灯火排队
+				var jx := sin(cell.x * 12.3 + cell.y * 7.7) * 8.0
+				var jy := cos(cell.x * 5.1 + cell.y * 3.3) * 4.0
+				lights.append(base + Vector2(jx, boff.y * 0.55 + jy))
 	draw_set_transform_matrix(Transform2D())
 
 	# 选中建筑高亮（金色框，大院描 2x2）
@@ -2041,3 +2146,19 @@ func _draw() -> void:
 					var gtex2 := _building_tex(selected_tool)
 					draw_texture(gtex2, _billboard_off(gtex2), Color(1, 1, 1, 0.6))
 					draw_set_transform_matrix(Transform2D())
+
+	# 昼夜交替：晨昏暖调 + 夜色叠加（屏幕空间），然后在夜色上点亮灯火
+	var dusk := _duskness()
+	if dusk > 0.01:
+		draw_set_transform_matrix(get_global_transform_with_canvas().affine_inverse())
+		draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color(0.95, 0.55, 0.25, dusk * 0.15))
+	if night > 0.01:
+		draw_set_transform_matrix(get_global_transform_with_canvas().affine_inverse())
+		draw_rect(Rect2(Vector2.ZERO, get_viewport_rect().size), Color(0.08, 0.11, 0.38, night * 0.5))
+		draw_set_transform_matrix(Transform2D())
+		for lp: Vector2 in lights:
+			draw_set_transform_matrix(_proj().affine_inverse() * Transform2D(0, lp))
+			var flick := 0.9 + 0.1 * sin(_anim_t * 3.0 + lp.x * 0.7)
+			draw_circle(Vector2.ZERO, 7.0, Color(1.0, 0.7, 0.35, night * 0.15 * flick))
+			draw_circle(Vector2.ZERO, 3.2, Color(1.0, 0.8, 0.45, night * 0.85 * flick))
+		draw_set_transform_matrix(Transform2D())

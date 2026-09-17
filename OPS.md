@@ -78,3 +78,14 @@ python tools/gen_ai_assets.py --test                # 试生成一张到临时�
 ```bash
 "$GODOT" --headless --path /d/agent/tiny --import
 ```
+
+## 动画素材预处理（抠图脚本）
+
+以下脚本会就地修改包内 PNG（git 可恢复），为运行时动画拆层：
+
+```bash
+python tools/cut_mill_wheel.py      # 磨坊水车：抠出转轮层/前景层，底图补洞
+python tools/cut_flags_banners.py   # 市集抹除静态三角旗；酒楼幌子抠为独立贴图
+```
+
+重跑前需先 `git checkout -- assets/packs/gongbi` 还原原图（脚本基于原图标定）。
