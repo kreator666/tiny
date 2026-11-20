@@ -1,0 +1,44 @@
+{
+  "roof_tile.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "roof_thatch.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "wall_white.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "wall_wood.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "wall_gray.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "base_stone.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  }
+}

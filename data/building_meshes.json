@@ -1,0 +1,93 @@
+{
+	"hut": {
+		"roof": "gable",
+		"body_frac": 0.55,
+		"tex_roof": "facade/roof_thatch.png",
+		"tex_wall": "facade/wall_white.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"tilehouse": {
+		"roof": "gable",
+		"body_frac": 0.55,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/wall_white.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"mill": {
+		"roof": "gable",
+		"body_frac": 0.55,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/wall_wood.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"grocer": {
+		"roof": "gable",
+		"body_frac": 0.55,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/wall_white.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"market": {
+		"roof": "gable",
+		"body_frac": 0.6,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/wall_wood.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"winery": {
+		"roof": "gable",
+		"body_frac": 0.55,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/wall_wood.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"oilpress": {
+		"roof": "gable",
+		"body_frac": 0.55,
+		"tex_roof": "facade/roof_thatch.png",
+		"tex_wall": "facade/wall_wood.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"loom": {
+		"roof": "flat",
+		"body_frac": 0.85,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/wall_wood.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"restaurant": {
+		"roof": "gable",
+		"body_frac": 0.6,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/wall_white.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"well": {
+		"roof": "gable",
+		"body_frac": 0.5,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/wall_white.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"clinic": {
+		"roof": "gable",
+		"body_frac": 0.55,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/wall_gray.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"repair": {
+		"roof": "flat",
+		"body_frac": 0.85,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/wall_gray.png",
+		"tex_base": "facade/base_stone.png"
+	},
+	"woodcutter": {
+		"roof": "gable",
+		"body_frac": 0.55,
+		"tex_roof": "facade/roof_thatch.png",
+		"tex_wall": "facade/wall_wood.png",
+		"tex_base": "facade/base_stone.png"
+	}
+}

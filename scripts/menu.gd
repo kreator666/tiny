@@ -6,8 +6,6 @@ const MAIN_SCENE := "res://scenes/main.tscn"
 
 
 func _ready() -> void:
-	# 防御：若从游戏场景返回，根 Viewport 上可能残留相机 canvas_transform
-	get_viewport().canvas_transform = Transform2D.IDENTITY
 	Main.detect_debug_mode()  # 开发者命令行参数，主菜单即生效
 	var bg := ColorRect.new()
 	bg.color = Color(0.13, 0.12, 0.10)
@@ -57,7 +55,7 @@ func _ready() -> void:
 	# 新游戏可选难度：悠闲 / 标准 / 挑战
 	for d in ["easy", "normal", "hard"]:
 		var new_game := Button.new()
-		new_game.text = "新游戏（%s）" % str(Main.DIFFICULTY[d]["name"])
+		new_game.text = "新游戏（%s）" % str(GameState.DIFFICULTY[d]["name"])
 		new_game.custom_minimum_size = Vector2(300, 0)
 		new_game.pressed.connect(_on_new_game.bind(d))
 		box.add_child(new_game)
