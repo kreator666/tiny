@@ -40,5 +40,96 @@
       128,
       128
     ]
+  },
+  "hut_wall.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "tilehouse_wall.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "mill_wall.png": {
+    "method": "ai",
+    "size": [
+      256,
+      256
+    ]
+  },
+  "grocer_wall.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "market_wall.png": {
+    "method": "ai",
+    "size": [
+      256,
+      256
+    ]
+  },
+  "winery_wall.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "oilpress_wall.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "loom_wall.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "restaurant_wall.png": {
+    "method": "ai",
+    "size": [
+      256,
+      256
+    ]
+  },
+  "well_wall.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "clinic_wall.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "repair_wall.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
+  },
+  "woodcutter_wall.png": {
+    "method": "ai",
+    "size": [
+      128,
+      128
+    ]
   }
 }

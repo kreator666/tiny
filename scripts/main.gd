@@ -71,6 +71,15 @@ var _info_title: Label
 var _info_body: Label
 var _repair_btn: Button
 
+# 道路工具拖拽铺路状态：左键按下先"武装"，移动超过阈值转拖拽采集路径，松开批量提交；
+# 未过阈值视为单击，走原 _try_place 单格放置（手感与语义均不变）
+const ROAD_DRAG_THRESHOLD := 0.3 * GameState.CELL  # 0.3 格（像素）
+var _road_armed := false  # 道路工具左键已按下
+var _road_drag_moved := false  # 已越过拖拽阈值（否则松开按单击处理）
+var _road_press_pos := Vector2.ZERO  # 按下点地面像素坐标
+var _road_drag_cells: Array[Vector2i] = []  # 已采集路径（去重、插值填满）
+var _road_drag_set := {}  # 路径格查重集
+
 
 func _ready() -> void:
 	state = GameState.new()
@@ -124,6 +133,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed:
 		match event.keycode:
 			KEY_ESCAPE:
+				_cancel_road_drag()
 				_on_tool_selected("")
 				_close_info_panel()
 			KEY_Q:
@@ -141,23 +151,99 @@ func _unhandled_input(event: InputEvent) -> void:
 			MOUSE_BUTTON_MIDDLE:
 				camera_rig.set_dragging(event.pressed)
 			MOUSE_BUTTON_RIGHT:
+				_cancel_road_drag()
 				camera_rig.set_orbiting(event.pressed)
 				if event.pressed:
 					_on_tool_selected("")
 					_close_info_panel()
 			MOUSE_BUTTON_LEFT:
 				if event.pressed:
-					var cell := state.screen_to_cell(renderer.mouse_grid_pos())
-					if state.selected_tool.is_empty():
-						_select_at(cell)
-					else:
-						state._try_place(cell)
+					_on_left_pressed(event.position)
+				else:
+					_finish_road_drag()
 	elif event is InputEventMouseMotion:
 		if camera_rig.is_dragging():
 			camera_rig.pan_by(event.relative)
 		elif camera_rig.is_orbiting():
 			camera_rig.orbit_adjust(event.relative)
+		if _road_armed:
+			_update_road_drag(event.position)
 		state.hover_cell = state.screen_to_cell(renderer.mouse_grid_pos())
+
+
+## 左键按下：道路工具进入"待拖拽"状态（不立即放置）；其余工具/选择保持原行为
+func _on_left_pressed(screen_pos: Vector2) -> void:
+	var cell := state.screen_to_cell(camera_rig.grid_pos_at(screen_pos))
+	if state.selected_tool == "road":
+		_road_armed = true
+		_road_drag_moved = false
+		_road_press_pos = camera_rig.grid_pos_at(screen_pos)
+		_road_drag_cells = [cell]
+		_road_drag_set = {cell: true}
+		renderer.sync_road_path(_road_drag_cells)
+		_show_message("铺路 %d 格 · %d 金" % [1, int(state.building_defs["road"]["cost_gold"])])
+	elif state.selected_tool.is_empty():
+		_select_at(cell)
+	else:
+		state._try_place(cell)
+
+
+## 拖拽采集：先判阈值（未过阈值不采格，松开仍按单击）；越过阈值后悬停格变化时
+## 与上一格做网格直线插值填满（快速拖动不断线），重复格不计入
+func _update_road_drag(screen_pos: Vector2) -> void:
+	var grid_pos := camera_rig.grid_pos_at(screen_pos)
+	if not _road_drag_moved:
+		if grid_pos.distance_to(_road_press_pos) < ROAD_DRAG_THRESHOLD:
+			return
+		_road_drag_moved = true  # 阈值刚越过：从按下格到当前格同样插值填满
+	var cur := state.screen_to_cell(grid_pos)
+	var last: Vector2i = _road_drag_cells[_road_drag_cells.size() - 1]
+	if cur == last:
+		return
+	var d := cur - last
+	var steps := maxi(absi(d.x), absi(d.y))
+	for i in range(1, steps + 1):
+		var c := last + Vector2i(roundi(d.x * i / float(steps)), roundi(d.y * i / float(steps)))
+		if _road_drag_set.has(c):
+			continue
+		_road_drag_set[c] = true
+		_road_drag_cells.append(c)
+	renderer.sync_road_path(_road_drag_cells)
+	_show_message("铺路 %d 格 · %d 金" % [_road_drag_cells.size(),
+		_road_drag_cells.size() * int(state.building_defs["road"]["cost_gold"])])
+
+
+## 松开左键：未过阈值 = 原单击放置（走 _try_place 全语义）；
+## 已拖拽 = pave_road_path 批量提交，提示铺成/跳过格数（铺成功格放一次建造音）
+func _finish_road_drag() -> void:
+	if not _road_armed:
+		return
+	var cells := _road_drag_cells
+	var was_drag := _road_drag_moved
+	_road_armed = false
+	_road_drag_moved = false
+	renderer.clear_road_path()
+	if not was_drag:
+		state._try_place(cells[0])
+		return
+	var paved: int = state.pave_road_path(cells)
+	var skipped := cells.size() - paved
+	if paved > 0:
+		Sound.play("build")
+		_show_message("已铺 %d 格道路（跳过 %d 格）" % [paved, skipped] if skipped > 0 else "已铺 %d 格道路" % paved)
+	elif skipped > 0:
+		_show_message("没有可铺的格子（跳过 %d 格）" % skipped)
+
+
+## 右键/Esc 取消本次拖拽：不铺、不扣钱、无音效
+func _cancel_road_drag() -> bool:
+	if not _road_armed:
+		return false
+	_road_armed = false
+	_road_drag_moved = false
+	renderer.clear_road_path()
+	_show_message("已取消铺路")
+	return true
 
 
 # ---------- GameState 信号处理 ----------
@@ -648,6 +734,7 @@ func _show_build_menu_category(cat: String) -> void:
 
 
 func _on_tool_selected(type: String) -> void:
+	_cancel_road_drag()  # 换工具/取消选择时中断进行中的铺路拖拽
 	Sound.play("click")
 	state.selected_tool = type
 	for tool: String in _tool_buttons:

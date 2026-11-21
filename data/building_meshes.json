@@ -1,93 +1,1258 @@
 {
 	"hut": {
-		"roof": "gable",
-		"body_frac": 0.55,
+		"roof_style": "gable",
+		"body_frac": 0.5,
 		"tex_roof": "facade/roof_thatch.png",
-		"tex_wall": "facade/wall_white.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/hut_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.0,
+					0.06,
+					1.0
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.78,
+					0.42,
+					0.72
+				],
+				"offset": [
+					0,
+					0.06,
+					0.02
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "pyramid",
+				"size": [
+					1.0,
+					0.55,
+					0.95
+				],
+				"offset": [
+					0,
+					0.48,
+					0
+				],
+				"tex": "roof"
+			}
+		]
 	},
 	"tilehouse": {
-		"roof": "gable",
+		"roof_style": "gable",
 		"body_frac": 0.55,
 		"tex_roof": "facade/roof_tile.png",
-		"tex_wall": "facade/wall_white.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/tilehouse_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.0,
+					0.08,
+					1.1
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.82,
+					0.88,
+					0.9
+				],
+				"offset": [
+					0,
+					0.08,
+					0
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "prism",
+				"size": [
+					1.0,
+					0.4,
+					1.06
+				],
+				"offset": [
+					0,
+					0.96,
+					0
+				],
+				"tex": "roof"
+			}
+		]
 	},
 	"mill": {
-		"roof": "gable",
+		"roof_style": "gable",
 		"body_frac": 0.55,
 		"tex_roof": "facade/roof_tile.png",
-		"tex_wall": "facade/wall_wood.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/mill_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					2.2,
+					0.1,
+					2.2
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.8,
+					1.25,
+					1.9
+				],
+				"offset": [
+					0,
+					0.1,
+					-0.12
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "prism",
+				"size": [
+					2.0,
+					0.5,
+					2.1
+				],
+				"offset": [
+					0,
+					1.35,
+					-0.05
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.75,
+					0.65,
+					0.75
+				],
+				"offset": [
+					0.6,
+					0.1,
+					0.6
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "prism",
+				"size": [
+					0.9,
+					0.3,
+					0.95
+				],
+				"offset": [
+					0.6,
+					0.75,
+					0.6
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.4,
+					0.12,
+					0.6
+				],
+				"offset": [
+					0,
+					0.02,
+					0.8
+				],
+				"tex": "base"
+			}
+		]
 	},
 	"grocer": {
-		"roof": "gable",
+		"roof_style": "gable",
 		"body_frac": 0.55,
 		"tex_roof": "facade/roof_tile.png",
-		"tex_wall": "facade/wall_white.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/grocer_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [
+			"awning"
+		],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.2,
+					0.08,
+					1.2
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.92,
+					0.8,
+					0.9
+				],
+				"offset": [
+					0,
+					0.08,
+					-0.05
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "prism",
+				"size": [
+					1.15,
+					0.32,
+					1.1
+				],
+				"offset": [
+					0,
+					0.88,
+					-0.05
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "ramp",
+				"size": [
+					0.95,
+					0.25,
+					0.5
+				],
+				"offset": [
+					0,
+					0.55,
+					0.32
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.7,
+					0.35,
+					0.28
+				],
+				"offset": [
+					0,
+					0.08,
+					0.45
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.35,
+					0.3,
+					0.35
+				],
+				"offset": [
+					-0.4,
+					0.08,
+					0.25
+				],
+				"tex": null
+			}
+		]
 	},
 	"market": {
-		"roof": "gable",
-		"body_frac": 0.6,
+		"roof_style": "hip",
+		"body_frac": 0.65,
 		"tex_roof": "facade/roof_tile.png",
-		"tex_wall": "facade/wall_wood.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/market_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [
+			"awning"
+		],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					2.2,
+					0.08,
+					1.6
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					2.0,
+					0.62,
+					0.4
+				],
+				"offset": [
+					0,
+					0.08,
+					-0.5
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "prism",
+				"size": [
+					2.1,
+					0.22,
+					0.7
+				],
+				"offset": [
+					0,
+					0.7,
+					-0.42
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "plane",
+				"size": [
+					1.9,
+					0.45,
+					0
+				],
+				"offset": [
+					0,
+					0.42,
+					-0.28
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.05,
+					0.85,
+					0.05
+				],
+				"offset": [
+					-0.8,
+					0.08,
+					0.45
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.05,
+					0.85,
+					0.05
+				],
+				"offset": [
+					0.8,
+					0.08,
+					0.45
+				],
+				"tex": null
+			},
+			{
+				"shape": "ramp",
+				"size": [
+					1.9,
+					0.18,
+					0.85
+				],
+				"offset": [
+					0,
+					0.88,
+					0.3
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.7,
+					0.32,
+					0.45
+				],
+				"offset": [
+					0,
+					0.08,
+					0.4
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.05,
+					1.3,
+					0.05
+				],
+				"offset": [
+					-0.5,
+					0.08,
+					0.55
+				],
+				"tex": null
+			}
+		]
 	},
 	"winery": {
-		"roof": "gable",
+		"roof_style": "gable",
 		"body_frac": 0.55,
 		"tex_roof": "facade/roof_tile.png",
-		"tex_wall": "facade/wall_wood.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/winery_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [
+			"jars"
+		],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.5,
+					0.08,
+					1.5
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.15,
+					1.1,
+					1.15
+				],
+				"offset": [
+					0,
+					0.08,
+					-0.08
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "prism",
+				"size": [
+					1.4,
+					0.45,
+					1.35
+				],
+				"offset": [
+					0,
+					1.18,
+					-0.07
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "cylinder",
+				"size": [
+					0.28,
+					0.34,
+					0.28
+				],
+				"offset": [
+					0.42,
+					0.08,
+					0.5
+				],
+				"tex": null
+			},
+			{
+				"shape": "cylinder",
+				"size": [
+					0.22,
+					0.27,
+					0.22
+				],
+				"offset": [
+					0.62,
+					0.08,
+					0.45
+				],
+				"tex": null
+			},
+			{
+				"shape": "cylinder",
+				"size": [
+					0.18,
+					0.22,
+					0.18
+				],
+				"offset": [
+					0.53,
+					0.42,
+					0.48
+				],
+				"tex": null
+			}
+		]
 	},
 	"oilpress": {
-		"roof": "gable",
-		"body_frac": 0.55,
+		"roof_style": "thick_thatch",
+		"body_frac": 0.5,
 		"tex_roof": "facade/roof_thatch.png",
-		"tex_wall": "facade/wall_wood.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/oilpress_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [
+			"chimney"
+		],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.5,
+					0.08,
+					1.5
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.15,
+					0.95,
+					1.1
+				],
+				"offset": [
+					-0.05,
+					0.08,
+					-0.05
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "prism",
+				"size": [
+					1.35,
+					0.42,
+					1.3
+				],
+				"offset": [
+					-0.05,
+					1.03,
+					-0.05
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.16,
+					0.55,
+					0.16
+				],
+				"offset": [
+					0.45,
+					1.2,
+					-0.35
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.07,
+					0.75,
+					0.07
+				],
+				"offset": [
+					0.5,
+					0.08,
+					0.5
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.07,
+					0.07,
+					0.55
+				],
+				"offset": [
+					0.5,
+					0.78,
+					0.3
+				],
+				"tex": null
+			},
+			{
+				"shape": "ramp",
+				"size": [
+					0.3,
+					0.35,
+					0.35
+				],
+				"offset": [
+					0.5,
+					0.08,
+					0.42
+				],
+				"tex": null
+			}
+		]
 	},
 	"loom": {
-		"roof": "flat",
+		"roof_style": "flat",
 		"body_frac": 0.85,
 		"tex_roof": "facade/roof_tile.png",
-		"tex_wall": "facade/wall_wood.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/loom_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [
+			"rack"
+		],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.5,
+					0.08,
+					1.3
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.1,
+					0.85,
+					1.0
+				],
+				"offset": [
+					0.12,
+					0.08,
+					-0.05
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.3,
+					0.08,
+					1.2
+				],
+				"offset": [
+					0.05,
+					0.93,
+					-0.05
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.05,
+					0.8,
+					0.05
+				],
+				"offset": [
+					-0.55,
+					0.08,
+					0.25
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.05,
+					0.8,
+					0.05
+				],
+				"offset": [
+					-0.55,
+					0.08,
+					-0.25
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.05,
+					0.05,
+					0.9
+				],
+				"offset": [
+					-0.55,
+					0.88,
+					0
+				],
+				"tex": null
+			},
+			{
+				"shape": "plane",
+				"size": [
+					0.4,
+					0.55,
+					0
+				],
+				"offset": [
+					-0.55,
+					0.32,
+					0.15
+				],
+				"tex": null
+			},
+			{
+				"shape": "plane",
+				"size": [
+					0.4,
+					0.45,
+					0
+				],
+				"offset": [
+					-0.55,
+					0.38,
+					-0.22
+				],
+				"tex": null
+			}
+		]
 	},
 	"restaurant": {
-		"roof": "gable",
-		"body_frac": 0.6,
+		"roof_style": "gable",
+		"body_frac": 0.7,
 		"tex_roof": "facade/roof_tile.png",
-		"tex_wall": "facade/wall_white.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/restaurant_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [
+			"banner_pole"
+		],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.6,
+					0.08,
+					1.4
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.45,
+					0.8,
+					1.25
+				],
+				"offset": [
+					0,
+					0.08,
+					0
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "prism",
+				"size": [
+					1.6,
+					0.16,
+					1.4
+				],
+				"offset": [
+					0,
+					0.88,
+					0
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.05,
+					0.6,
+					0.9
+				],
+				"offset": [
+					0,
+					1.04,
+					0
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "prism",
+				"size": [
+					1.25,
+					0.4,
+					1.05
+				],
+				"offset": [
+					0,
+					1.64,
+					0
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.5,
+					0.045,
+					0.045
+				],
+				"offset": [
+					-0.55,
+					1.14,
+					0.62
+				],
+				"tex": null
+			}
+		]
 	},
 	"well": {
-		"roof": "gable",
-		"body_frac": 0.5,
+		"roof_style": "pyramid",
+		"body_frac": 0.45,
 		"tex_roof": "facade/roof_tile.png",
-		"tex_wall": "facade/wall_white.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/well_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [
+			"well_ring"
+		],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					0.9,
+					0.06,
+					0.9
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "cylinder",
+				"size": [
+					0.56,
+					0.2,
+					0.56
+				],
+				"offset": [
+					0,
+					0.06,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.6,
+					0.06
+				],
+				"offset": [
+					-0.26,
+					0.26,
+					0
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.6,
+					0.06
+				],
+				"offset": [
+					0.26,
+					0.26,
+					0
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.5,
+					0.05,
+					0.05
+				],
+				"offset": [
+					0,
+					0.68,
+					0
+				],
+				"tex": null
+			},
+			{
+				"shape": "pyramid",
+				"size": [
+					0.8,
+					0.3,
+					0.8
+				],
+				"offset": [
+					0,
+					0.86,
+					0
+				],
+				"tex": "roof"
+			}
+		]
 	},
 	"clinic": {
-		"roof": "gable",
+		"roof_style": "gable",
 		"body_frac": 0.55,
 		"tex_roof": "facade/roof_tile.png",
-		"tex_wall": "facade/wall_gray.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/clinic_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [
+			"plaque"
+		],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.2,
+					0.08,
+					1.2
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.0,
+					0.9,
+					1.0
+				],
+				"offset": [
+					0,
+					0.08,
+					0
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "prism",
+				"size": [
+					1.2,
+					0.35,
+					1.15
+				],
+				"offset": [
+					0,
+					0.98,
+					0
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.42,
+					0.2,
+					0.06
+				],
+				"offset": [
+					0,
+					0.78,
+					0.53
+				],
+				"tex": null
+			},
+			{
+				"shape": "plane",
+				"size": [
+					0.3,
+					0.5,
+					0
+				],
+				"offset": [
+					0,
+					0.08,
+					0.505
+				],
+				"tex": null
+			}
+		]
 	},
 	"repair": {
-		"roof": "flat",
+		"roof_style": "flat",
 		"body_frac": 0.85,
 		"tex_roof": "facade/roof_tile.png",
-		"tex_wall": "facade/wall_gray.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/repair_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [
+			"woodpile"
+		],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.3,
+					0.08,
+					1.3
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.95,
+					0.75,
+					0.95
+				],
+				"offset": [
+					-0.1,
+					0.08,
+					-0.08
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.1,
+					0.07,
+					1.1
+				],
+				"offset": [
+					-0.1,
+					0.83,
+					-0.08
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.7,
+					0.06
+				],
+				"offset": [
+					0.42,
+					0.08,
+					0.42
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.7,
+					0.06
+				],
+				"offset": [
+					0.42,
+					0.08,
+					-0.28
+				],
+				"tex": null
+			},
+			{
+				"shape": "ramp",
+				"size": [
+					0.45,
+					0.12,
+					0.85
+				],
+				"offset": [
+					0.4,
+					0.78,
+					0.08
+				],
+				"tex": null
+			},
+			{
+				"shape": "ramp",
+				"size": [
+					0.55,
+					0.3,
+					0.45
+				],
+				"offset": [
+					-0.35,
+					0.08,
+					0.38
+				],
+				"tex": null
+			},
+			{
+				"shape": "ramp",
+				"size": [
+					0.45,
+					0.24,
+					0.4
+				],
+				"offset": [
+					-0.38,
+					0.08,
+					-0.2
+				],
+				"tex": null
+			}
+		]
 	},
 	"woodcutter": {
-		"roof": "gable",
+		"roof_style": "thick_thatch",
 		"body_frac": 0.55,
 		"tex_roof": "facade/roof_thatch.png",
-		"tex_wall": "facade/wall_wood.png",
-		"tex_base": "facade/base_stone.png"
+		"tex_wall": "facade/woodcutter_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [
+			"woodpile"
+		],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.5,
+					0.08,
+					1.5
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					1.0,
+					0.8,
+					0.95
+				],
+				"offset": [
+					0.18,
+					0.08,
+					-0.08
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "pyramid",
+				"size": [
+					1.45,
+					0.5,
+					1.4
+				],
+				"offset": [
+					0,
+					0.88,
+					-0.05
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "ramp",
+				"size": [
+					0.6,
+					0.35,
+					0.5
+				],
+				"offset": [
+					-0.42,
+					0.08,
+					0.3
+				],
+				"tex": null
+			},
+			{
+				"shape": "ramp",
+				"size": [
+					0.5,
+					0.28,
+					0.42
+				],
+				"offset": [
+					-0.45,
+					0.08,
+					-0.2
+				],
+				"tex": null
+			},
+			{
+				"shape": "cylinder",
+				"size": [
+					0.24,
+					0.22,
+					0.24
+				],
+				"offset": [
+					0.35,
+					0.08,
+					0.5
+				],
+				"tex": null
+			}
+		]
 	}
 }

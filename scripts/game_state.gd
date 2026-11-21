@@ -486,6 +486,32 @@ func _try_place(cell: Vector2i) -> void:
 	hud_dirty.emit()
 
 
+## 铺路专用批量接口（拖拽连续铺路的提交动作）：沿路径顺序逐格铺设道路。
+## 与逐格单击 _try_place 的道路分支语义一致：该格在界内、无树、未占用、剩余金钱足够
+## 该格造价才铺（扣钱、置格）；不可建造或钱不够的格跳过、不中断后续格。
+## 置格/扣款逐格进行（金钱逐格递减，与单击相同），连通性与容量收尾重算一次——
+## 与逐格单击的最终游戏状态完全一致。只做道路；selected_tool 非 "road" 时返回 0。
+func pave_road_path(cells: Array[Vector2i]) -> int:
+	if selected_tool != "road":
+		return 0
+	var cost := int(building_defs["road"]["cost_gold"])
+	var paved := 0
+	for cell: Vector2i in cells:
+		if not _in_bounds(cell) or trees.has(cell) or _is_occupied(cell):
+			continue
+		if not Main.debug_mode and gold < cost:
+			continue
+		if not Main.debug_mode:
+			gold -= cost
+		buildings[cell] = "road"
+		paved += 1
+	if paved > 0:
+		_recompute_farm_connectivity()
+		_refresh_capacity()
+		hud_dirty.emit()
+	return paved
+
+
 func _try_demolish(cell: Vector2i) -> void:
 	var anchor := _estate_anchor_at(cell)
 	if anchor != Vector2i(-1, -1):

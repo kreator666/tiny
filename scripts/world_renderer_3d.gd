@@ -97,6 +97,8 @@ var _ghost: Node3D  # 幽灵容器
 var _ghost_sprite: Sprite3D
 var _ghost_mesh: MeshInstance3D
 var _sel_frame: Array = []  # 选中金框（4 根细条）
+var _road_path_root: Node3D  # 铺路拖拽预览（贴地高亮 Quad 池）
+var _road_path_quads: Array = []
 
 var _anchor_cache := {}
 var _mat_cache := {}
@@ -833,6 +835,41 @@ func _build_markers() -> void:
 		bar.visible = false
 		add_child(bar)
 		_sel_frame.append(bar)
+	_road_path_root = Node3D.new()
+	_road_path_root.name = "RoadPathPreview"
+	add_child(_road_path_root)
+
+
+# ---------- 铺路拖拽预览（贴地高亮 Quad 池，不逐帧实例化） ----------
+
+## 按路径顺序显示贴地高亮：绿=按序可铺，红=将被跳过（越界/占用/有树/钱不够）。
+## 可铺判定与 pave_road_path 一致：顺序模拟逐格扣款（DEBUG 模式免费）。
+func sync_road_path(cells: Array) -> void:
+	var cost := int(state.building_defs["road"]["cost_gold"])
+	var remaining := state.gold
+	while _road_path_quads.size() < cells.size():
+		var q := MeshInstance3D.new()
+		q.mesh = _unit_quad
+		_road_path_root.add_child(q)
+		_road_path_quads.append(q)
+	for i in _road_path_quads.size():
+		var quad: MeshInstance3D = _road_path_quads[i]
+		if i >= cells.size():
+			quad.visible = false
+			continue
+		var cell: Vector2i = cells[i]
+		var ok := state._in_bounds(cell) and not state._is_occupied(cell) \
+			and not state.trees.has(cell) and (Main.debug_mode or remaining >= cost)
+		if ok and not Main.debug_mode:
+			remaining -= cost
+		quad.visible = true
+		quad.transform = Transform3D(_quad_flat_transform, Vector3(cell.x + 0.5, 0.02, cell.y + 0.5))
+		quad.material_override = _flag_mat_for(Color(0.4, 0.9, 0.4, 0.25) if ok else Color(0.9, 0.3, 0.3, 0.35))
+
+
+func clear_road_path() -> void:
+	for quad: MeshInstance3D in _road_path_quads:
+		quad.visible = false
 
 
 func _flag_mat_for(color: Color) -> StandardMaterial3D:
