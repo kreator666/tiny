@@ -29,6 +29,8 @@ MESH_SIZE = {
     "oilpress": [1.5, 1.9, 1.5], "loom": [1.5, 1.6, 1.3], "restaurant": [1.6, 2.4, 1.4],
     "well": [0.9, 1.1, 0.9], "clinic": [1.2, 1.6, 1.2], "repair": [1.3, 1.5, 1.3],
     "woodcutter": [1.5, 1.5, 1.5],
+    # 矿产线：矿场（井架塔）/ 兵器坊（开敞棚+兵器架）/ 炼金坊（丹炉+高烟囱）
+    "mine": [1.4, 1.5, 1.4], "weaponry": [1.5, 1.5, 1.4], "goldworks": [1.5, 1.6, 1.5],
     # flat（贴地 tile，不写网格，尺寸仅存档备用）
     "farm": [1, 0.35, 1], "wheat": [1, 0.35, 1], "cotton": [1, 0.35, 1],
     "soy": [1, 0.35, 1], "grape": [1, 0.35, 1], "road": [1, 0.05, 1],
@@ -75,6 +77,15 @@ PARAMS = {
     "woodcutter": {"roof_style": "thick_thatch", "body_frac": 0.55,
                    "tex_roof": F+"roof_thatch.png", "tex_wall": F+"woodcutter_wall.png", "tex_base": F+"base_stone.png",
                    "attachments": ["woodpile"]},
+    "mine": {"roof_style": "gable", "body_frac": 0.5,
+             "tex_roof": F+"roof_tile.png", "tex_wall": F+"mine_wall.png", "tex_base": F+"base_stone.png",
+             "attachments": []},
+    "weaponry": {"roof_style": "flat", "body_frac": 0.8,
+                 "tex_roof": F+"roof_tile.png", "tex_wall": F+"weaponry_wall.png", "tex_base": F+"base_stone.png",
+                 "attachments": []},
+    "goldworks": {"roof_style": "gable", "body_frac": 0.5,
+                  "tex_roof": F+"roof_tile.png", "tex_wall": F+"goldworks_wall.png", "tex_base": F+"base_stone.png",
+                  "attachments": []},
 }
 
 # 按原画轮廓定制的部件蓝图（blueprint）：5~15 个部件拼出 billboard 原画结构，
@@ -98,7 +109,8 @@ BLUEPRINT = {
         {"shape": "box", "size": [0.82, 0.88, 0.9], "offset": [0, 0.08, 0], "tex": "wall"},
         {"shape": "prism", "size": [1.0, 0.4, 1.06], "offset": [0, 0.96, 0], "tex": "roof"},
     ],
-    # 磨坊：大进深正房 + 高坡顶 + 侧向门屋平台（水车为渲染层附加物，勿重复）
+    # 磨坊：大进深正房 + 高坡顶 + 侧向门屋平台（水车为渲染层附加物，勿重复；
+    # 轮轴件 tag=wheel_axle：渲染层据此推导水车轮心/朝向，挂在 +x 侧面、轮缘底部近地面）
     "mill": [
         {"shape": "box", "size": [2.2, 0.1, 2.2], "offset": [0, 0, 0], "tex": "base"},
         {"shape": "box", "size": [1.8, 1.25, 1.9], "offset": [0, 0.1, -0.12], "tex": "wall"},
@@ -106,6 +118,8 @@ BLUEPRINT = {
         {"shape": "box", "size": [0.75, 0.65, 0.75], "offset": [0.6, 0.1, 0.6], "tex": "wall"},
         {"shape": "prism", "size": [0.9, 0.3, 0.95], "offset": [0.6, 0.75, 0.6], "tex": "roof"},
         {"shape": "box", "size": [1.4, 0.12, 0.6], "offset": [0, 0.02, 0.8], "tex": "base"},
+        {"shape": "box", "size": [0.3, 0.08, 0.08], "offset": [0.95, 0.7, 0.35], "tex": None,
+         "tag": "wheel_axle"},
     ],
     # 杂货铺：民居 + 斜挑布篷 + 门前柜台货箱
     "grocer": [
@@ -168,12 +182,14 @@ BLUEPRINT = {
         {"shape": "box", "size": [0.5, 0.045, 0.045], "offset": [-0.55, 1.14, 0.62], "tex": None},
     ],
     # 水井：石栏圆井圈 + 双立柱 + 辘轳横杆 + 攒尖小顶棚，无墙身
+    # 辘轳横杆 tag=well_axle：渲染层据此定位打水吊桶的绳/桶挂点
     "well": [
         {"shape": "box", "size": [0.9, 0.06, 0.9], "offset": [0, 0, 0], "tex": "base"},
         {"shape": "cylinder", "size": [0.56, 0.2, 0.56], "offset": [0, 0.06, 0], "tex": "base"},
         {"shape": "box", "size": [0.06, 0.6, 0.06], "offset": [-0.26, 0.26, 0], "tex": None},
         {"shape": "box", "size": [0.06, 0.6, 0.06], "offset": [0.26, 0.26, 0], "tex": None},
-        {"shape": "box", "size": [0.5, 0.05, 0.05], "offset": [0, 0.68, 0], "tex": None},
+        {"shape": "box", "size": [0.5, 0.05, 0.05], "offset": [0, 0.68, 0], "tex": None,
+         "tag": "well_axle"},
         {"shape": "pyramid", "size": [0.8, 0.3, 0.8], "offset": [0, 0.86, 0], "tex": "roof"},
     ],
     # 医馆：正房 + 门楣牌匾 + 门脸
@@ -195,6 +211,48 @@ BLUEPRINT = {
         {"shape": "ramp", "size": [0.55, 0.3, 0.45], "offset": [-0.35, 0.08, 0.38], "tex": None},
         {"shape": "ramp", "size": [0.45, 0.24, 0.4], "offset": [-0.38, 0.08, -0.2], "tex": None},
     ],
+    # 矿场：井口石台 + 四柱井架塔 + 顶梁小披顶 + 矿车（铁矿石堆）
+    "mine": [
+        {"shape": "box", "size": [1.4, 0.08, 1.4], "offset": [0, 0, 0], "tex": "base"},
+        {"shape": "box", "size": [0.5, 0.14, 0.5], "offset": [0, 0.08, 0], "tex": "wall"},
+        {"shape": "box", "size": [0.06, 0.85, 0.06], "offset": [-0.18, 0.22, -0.18], "tex": None},
+        {"shape": "box", "size": [0.06, 0.85, 0.06], "offset": [0.18, 0.22, -0.18], "tex": None},
+        {"shape": "box", "size": [0.06, 0.85, 0.06], "offset": [-0.18, 0.22, 0.18], "tex": None},
+        {"shape": "box", "size": [0.06, 0.85, 0.06], "offset": [0.18, 0.22, 0.18], "tex": None},
+        {"shape": "box", "size": [0.46, 0.06, 0.06], "offset": [0, 0.98, 0], "tex": None},
+        {"shape": "box", "size": [0.06, 0.06, 0.46], "offset": [0, 0.86, 0], "tex": None},
+        {"shape": "prism", "size": [0.5, 0.14, 0.5], "offset": [0, 1.04, 0], "tex": "roof"},
+        {"shape": "box", "size": [0.34, 0.2, 0.24], "offset": [0.42, 0.08, 0.38], "tex": None},
+        {"shape": "box", "size": [0.28, 0.09, 0.18], "offset": [0.42, 0.28, 0.38], "tex": None},
+    ],
+    # 兵器坊：开敞工棚（四柱+斜顶）+ 兵器架（双柱横杆+三杆兵器）+ 火炉（冒烟）
+    "weaponry": [
+        {"shape": "box", "size": [1.5, 0.08, 1.4], "offset": [0, 0, 0], "tex": "base"},
+        {"shape": "box", "size": [0.06, 0.8, 0.06], "offset": [-0.55, 0.08, -0.4], "tex": None},
+        {"shape": "box", "size": [0.06, 0.8, 0.06], "offset": [0.55, 0.08, -0.4], "tex": None},
+        {"shape": "box", "size": [0.06, 0.8, 0.06], "offset": [-0.55, 0.08, 0.4], "tex": None},
+        {"shape": "box", "size": [0.06, 0.8, 0.06], "offset": [0.55, 0.08, 0.4], "tex": None},
+        {"shape": "ramp", "size": [1.3, 0.14, 1.0], "offset": [0, 0.84, 0], "tex": "roof"},
+        {"shape": "box", "size": [0.05, 0.7, 0.05], "offset": [-0.38, 0.08, 0.28], "tex": None},
+        {"shape": "box", "size": [0.05, 0.7, 0.05], "offset": [0.08, 0.08, 0.28], "tex": None},
+        {"shape": "box", "size": [0.75, 0.05, 0.05], "offset": [-0.15, 0.74, 0.28], "tex": None},
+        {"shape": "box", "size": [0.03, 0.78, 0.03], "offset": [-0.32, 0.08, 0.28], "tex": None},
+        {"shape": "box", "size": [0.03, 0.72, 0.03], "offset": [-0.15, 0.08, 0.28], "tex": None},
+        {"shape": "box", "size": [0.03, 0.82, 0.03], "offset": [0.02, 0.08, 0.28], "tex": None},
+        {"shape": "box", "size": [0.3, 0.35, 0.3], "offset": [0.45, 0.08, -0.3], "tex": "wall",
+         "tag": "smoke"},
+    ],
+    # 炼金坊：石台 + 圆顶丹炉（炉体+炉肩+炉顶）+ 高烟囱（冒烟）+ 金鼎
+    "goldworks": [
+        {"shape": "box", "size": [1.5, 0.08, 1.5], "offset": [0, 0, 0], "tex": "base"},
+        {"shape": "box", "size": [0.9, 0.1, 0.9], "offset": [0, 0.02, 0], "tex": "base"},
+        {"shape": "cylinder", "size": [0.7, 0.6, 0.7], "offset": [0, 0.12, 0], "tex": "wall"},
+        {"shape": "cylinder", "size": [0.5, 0.2, 0.5], "offset": [0, 0.72, 0], "tex": "wall"},
+        {"shape": "pyramid", "size": [0.55, 0.22, 0.55], "offset": [0, 0.92, 0], "tex": "roof"},
+        {"shape": "box", "size": [0.16, 1.1, 0.16], "offset": [0.45, 0.08, -0.3], "tex": None,
+         "tag": "smoke"},
+        {"shape": "cylinder", "size": [0.2, 0.18, 0.2], "offset": [-0.4, 0.08, 0.35], "tex": None},
+    ],
     # 伐木屋：偏右正房 + 四坡草顶 + 左侧柴堆 + 门前木墩
     "woodcutter": [
         {"shape": "box", "size": [1.5, 0.08, 1.5], "offset": [0, 0, 0], "tex": "base"},
@@ -207,6 +265,24 @@ BLUEPRINT = {
 }
 
 SHAPES = {"box", "prism", "pyramid", "cylinder", "ramp", "plane"}
+
+# 冒烟建筑（同 2D 版名单：磨坊/酒坊/油坊有烟囱，民居与酒楼为厨房炊烟）。
+# 出烟锚点不再用 2D 画布像素表，改为从 blueprint 推导：
+#   有烟囱件（顶部最高的 box/cylinder 件突出屋顶）-> 取该件顶面中心；
+#   无烟囱 -> 取最高屋顶件（prism 屋脊/pyramid 攒尖）顶面中心。
+SMOKE_TYPES = ["mill", "winery", "hut", "tilehouse", "oilpress", "restaurant",
+               "weaponry", "goldworks"]
+ROOF_SHAPES = {"prism", "pyramid"}
+
+
+def _smoke_anchor(btype: str) -> list:
+    parts = BLUEPRINT[btype]
+    # 显式 tag="smoke" 的件优先（如兵器坊火炉/炼金坊烟囱，低于棚顶但烟从这里出）；
+    # 否则取最高件顶面中心（烟囱件 / 屋顶脊线）
+    tagged = [p for p in parts if p.get("tag") == "smoke"]
+    top_part = tagged[0] if tagged else max(parts, key=lambda p: p["offset"][1] + p["size"][1])
+    top = top_part["offset"][1] + top_part["size"][1]
+    return [top_part["offset"][0], top, top_part["offset"][2]]
 
 
 def _validate_blueprints() -> None:
@@ -223,6 +299,27 @@ def _validate_blueprints() -> None:
                 raise SystemExit(f"{btype}[{i}] 部件悬空/入地: {p}")
         if not 3 <= len(parts) <= 15:
             raise SystemExit(f"{btype} 部件数 {len(parts)} 超出 3~15 范围")
+    # 磨坊水车：恰一个 wheel_axle 件（渲染层推导轮心/轮轴朝向用）
+    axles = [p for p in BLUEPRINT["mill"] if p.get("tag") == "wheel_axle"]
+    if len(axles) != 1:
+        raise SystemExit(f"mill 必须恰有 1 个 wheel_axle 件，实际 {len(axles)}")
+    # 冒烟 tag：若存在必须唯一（锚点推导优先用件）
+    for btype, parts in BLUEPRINT.items():
+        tagged = [p for p in parts if p.get("tag") == "smoke"]
+        if len(tagged) > 1:
+            raise SystemExit(f"{btype} smoke 件必须至多 1 个，实际 {len(tagged)}")
+    # 水井打水：恰一个 well_axle 件（渲染层定位吊桶绳/桶挂点用）
+    well_axles = [p for p in BLUEPRINT["well"] if p.get("tag") == "well_axle"]
+    if len(well_axles) != 1:
+        raise SystemExit(f"well 必须恰有 1 个 well_axle 件，实际 {len(well_axles)}")
+    # 冒烟锚点可推导：有 smoke 件直接用；否则最高件须为屋顶形或突出屋顶的墙/柱形
+    for btype in SMOKE_TYPES:
+        tagged = [p for p in BLUEPRINT[btype] if p.get("tag") == "smoke"]
+        if tagged:
+            continue
+        top_part = max(BLUEPRINT[btype], key=lambda p: p["offset"][1] + p["size"][1])
+        if top_part["shape"] not in ROOF_SHAPES and top_part["shape"] not in {"box", "cylinder"}:
+            raise SystemExit(f"{btype} 冒烟锚点无法从最高件推导: {top_part}")
 
 
 def main() -> None:
@@ -243,10 +340,16 @@ def main() -> None:
     if no_param:
         raise SystemExit(f"以下非 flat 建筑缺少造型参数: {no_param}")
     _validate_blueprints()
-    out = {k: dict(v, blueprint=BLUEPRINT[k]) for k, v in PARAMS.items()}
+    out = {}
+    for k, v in PARAMS.items():
+        entry = dict(v, blueprint=BLUEPRINT[k])
+        if k in SMOKE_TYPES:
+            entry["smoke_anchor"] = _smoke_anchor(k)  # blueprint 推导的出烟点（建筑本地坐标）
+        out[k] = entry
     OUT.write_text(json.dumps(out, ensure_ascii=False, indent="\t") + "\n", encoding="utf-8")
     print(f"OK: {len(defs)} 种建筑 mesh_size 已回写 building_meshes.json"
-          f"（{len(PARAMS)} 种非 flat：屋顶变体/体型/专属贴图/附件/blueprint 部件蓝图）")
+          f"（{len(PARAMS)} 种非 flat：屋顶变体/体型/专属贴图/附件/blueprint 部件蓝图"
+          f"，{len(SMOKE_TYPES)} 种冒烟锚点，磨坊轮轴件）")
 
 
 if __name__ == "__main__":

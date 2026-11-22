@@ -50,6 +50,7 @@ var camera_rig: CameraRig
 var _pop_label: Label
 var _grain_label: Label
 var _flour_label: Label
+var _ore_label: Label
 var _food_label: Label
 var _wood_label: Label
 var _gold_label: Label
@@ -79,6 +80,10 @@ var _road_drag_moved := false  # 已越过拖拽阈值（否则松开按单击�
 var _road_press_pos := Vector2.ZERO  # 按下点地面像素坐标
 var _road_drag_cells: Array[Vector2i] = []  # 已采集路径（去重、插值填满）
 var _road_drag_set := {}  # 路径格查重集
+
+# 时间速度档（0=暂停 1/2/4×；纯运行态不入存档，读档回 1×）
+var time_scale := 1.0
+var _speed_buttons := {}  # 档位 -> Button（高亮当前档）
 
 
 func _ready() -> void:
@@ -120,12 +125,15 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	# 与阶段0相同的单一驱动顺序：动画时钟 -> 逻辑 -> 相机平移 -> 渲染动态更新
-	renderer._anim_t += delta
-	state.tick(delta)
+	# 与阶段0相同的单一驱动顺序：动画时钟 -> 逻辑 -> 相机平移 -> 渲染动态更新。
+	# 时间速度：tick 与 _anim_t 同乘 time_scale（0/1/2/4），视觉动画与逻辑同速；
+	# 暂停时画面静止，相机平移/输入/HUD 仍可用
+	var dt := delta * time_scale
+	renderer._anim_t += dt
+	state.tick(dt)
 	if not state.walkers.is_empty():
 		_walker_label.text = "行人：%d" % state.walkers.size()
-	camera_rig.pan_wasd(delta)
+	camera_rig.pan_wasd(delta)  # 相机不随暂停锁定
 	renderer.update_dynamic()
 
 
@@ -136,6 +144,9 @@ func _unhandled_input(event: InputEvent) -> void:
 				_cancel_road_drag()
 				_on_tool_selected("")
 				_close_info_panel()
+			KEY_SPACE:
+				# 速度快捷键：暂停 <-> 1×（与按钮同效）
+				_set_time_scale(1.0 if time_scale == 0.0 else 0.0)
 			KEY_Q:
 				camera_rig.rotate_view(1)
 			KEY_E:
@@ -254,6 +265,17 @@ func _on_state_hud_dirty() -> void:
 	renderer.sync_world()
 
 
+## 时间速度档切换：高亮当前档按钮；纯运行态，不入存档
+func _set_time_scale(v: float) -> void:
+	time_scale = v
+	_sync_speed_buttons()
+
+
+func _sync_speed_buttons() -> void:
+	for v: float in _speed_buttons:
+		_speed_buttons[v].set_pressed_no_signal(v == time_scale)
+
+
 func _on_build_menu_refresh() -> void:
 	## 酒楼解锁后重建建造菜单（置灰按钮转可点）
 	if _menu_box == null:
@@ -321,6 +343,12 @@ func _refresh_info_panel() -> void:
 				var on := int(state.employed.get(key, 0))
 				lines.append("岗位：%d　在岗：%d（效率 %d%%）" % [jobs, on, int(state._work_efficiency(key, def) * 100)])
 			lines.append("维护度：%d%%" % state._cond_of(key))
+			if btype == "mine":
+				var left: Dictionary = state.ore_left.get(key, {})
+				if left.is_empty() or float(left["amount"]) <= 0.0:
+					lines.append("矿脉已枯竭（矿井可拆除）")
+				else:
+					lines.append("矿脉剩余：%d / %d" % [int(round(float(left["amount"]))), GameState.ORE_AMOUNT])
 			if def.has("crop"):
 				var stage := mini(int(state.farm_grow.get(cell, 0)), 3)
 				var sname: String = ["幼苗", "生长", "茂盛", "待收"][stage]
@@ -543,6 +571,21 @@ func _build_hud() -> void:
 	status_title.text = "状态"
 	status_title.add_theme_font_size_override("font_size", 16)
 	sbox.add_child(status_title)
+	# 时间速度档（⏸/1×/2×/4×，空格切换 暂停<->1×）
+	var speed_row := HBoxContainer.new()
+	speed_row.add_theme_constant_override("separation", 4)
+	sbox.add_child(speed_row)
+	for spec in [[0.0, "⏸", "暂停"], [1.0, "1×", "正常"], [2.0, "2×", "快速"], [4.0, "4×", "超快速"]]:
+		var sb := Button.new()
+		sb.text = spec[1]
+		sb.tooltip_text = "%s（空格切换 暂停/正常）" % spec[2]
+		sb.toggle_mode = true
+		sb.custom_minimum_size = Vector2(40, 0)
+		var v: float = spec[0]
+		sb.pressed.connect(_set_time_scale.bind(v))
+		speed_row.add_child(sb)
+		_speed_buttons[v] = sb
+	_sync_speed_buttons()
 	_date_label = Label.new()
 	sbox.add_child(_date_label)
 	_pop_label = Label.new()
@@ -551,6 +594,8 @@ func _build_hud() -> void:
 	sbox.add_child(_grain_label)
 	_flour_label = Label.new()
 	sbox.add_child(_flour_label)
+	_ore_label = Label.new()
+	sbox.add_child(_ore_label)
 	_food_label = Label.new()
 	sbox.add_child(_food_label)
 	_wood_label = Label.new()
@@ -723,10 +768,10 @@ func _show_build_menu_category(cat: String) -> void:
 		var def: Dictionary = state.building_defs[btype]
 		var btn := _make_square_btn(_menu_icon(btype), def["name"])
 		btn.tooltip_text = "%s\n造价 %d 金" % [def["desc"], int(def["cost_gold"])]
-		if bool(def.get("locked", false)) and not state.restaurant_unlocked:
-			# 酒楼：四种食品各生产过一次前保持置灰
+		if not state._is_unlocked(btype):
+			# 锁定建筑（酒楼=四食品；兵器坊/炼金坊=采到过铁/金矿）：置灰 + 解锁提示
 			btn.disabled = true
-			btn.tooltip_text = "尚未解锁：需生产过 大米、面粉、豆油、葡萄酒 四种食品"
+			btn.tooltip_text = state._unlock_hint(btype)
 		btn.toggle_mode = true
 		btn.pressed.connect(_on_tool_selected.bind(btype))
 		grid.add_child(btn)
@@ -756,6 +801,8 @@ func _update_hud() -> void:
 		int(state.paddy), int(state.wheat), int(state.cotton), int(state.soy), int(state.grape)]
 	_flour_label.text = "货品：米 %d ｜ 面 %d ｜ 油 %d ｜ 酒 %d ｜ 布 %d" % [
 		int(state.rice), int(state.flour), int(state.oil), int(state.wine), int(state.cloth)]
+	_ore_label.text = "矿产：铁 %d ｜ 金 %d ｜ 兵器 %d" % [
+		int(state.iron_ore), int(state.gold_ore), int(state.weapons)]
 	_food_label.text = "食品：%d" % int(state.food)
 	_wood_label.text = "木材：%d" % int(state.wood)
 	_gold_label.text = "金钱：%d" % int(state.gold)

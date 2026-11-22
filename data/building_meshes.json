@@ -49,6 +49,11 @@
 				],
 				"tex": "roof"
 			}
+		],
+		"smoke_anchor": [
+			0,
+			1.03,
+			0
 		]
 	},
 	"tilehouse": {
@@ -101,6 +106,11 @@
 				],
 				"tex": "roof"
 			}
+		],
+		"smoke_anchor": [
+			0,
+			1.3599999999999999,
+			0
 		]
 	},
 	"mill": {
@@ -194,7 +204,27 @@
 					0.8
 				],
 				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.3,
+					0.08,
+					0.08
+				],
+				"offset": [
+					0.95,
+					0.7,
+					0.35
+				],
+				"tex": null,
+				"tag": "wheel_axle"
 			}
+		],
+		"smoke_anchor": [
+			0,
+			1.85,
+			-0.05
 		]
 	},
 	"grocer": {
@@ -525,6 +555,11 @@
 				],
 				"tex": null
 			}
+		],
+		"smoke_anchor": [
+			0,
+			1.63,
+			-0.07
 		]
 	},
 	"oilpress": {
@@ -635,6 +670,11 @@
 				],
 				"tex": null
 			}
+		],
+		"smoke_anchor": [
+			0.45,
+			1.75,
+			-0.35
 		]
 	},
 	"loom": {
@@ -855,6 +895,11 @@
 				],
 				"tex": null
 			}
+		],
+		"smoke_anchor": [
+			0,
+			2.04,
+			0
 		]
 	},
 	"well": {
@@ -935,7 +980,8 @@
 					0.68,
 					0
 				],
-				"tex": null
+				"tex": null,
+				"tag": "well_axle"
 			},
 			{
 				"shape": "pyramid",
@@ -1253,6 +1299,482 @@
 				],
 				"tex": null
 			}
+		]
+	},
+	"mine": {
+		"roof_style": "gable",
+		"body_frac": 0.5,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/mine_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.4,
+					0.08,
+					1.4
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.5,
+					0.14,
+					0.5
+				],
+				"offset": [
+					0,
+					0.08,
+					0
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.85,
+					0.06
+				],
+				"offset": [
+					-0.18,
+					0.22,
+					-0.18
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.85,
+					0.06
+				],
+				"offset": [
+					0.18,
+					0.22,
+					-0.18
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.85,
+					0.06
+				],
+				"offset": [
+					-0.18,
+					0.22,
+					0.18
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.85,
+					0.06
+				],
+				"offset": [
+					0.18,
+					0.22,
+					0.18
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.46,
+					0.06,
+					0.06
+				],
+				"offset": [
+					0,
+					0.98,
+					0
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.06,
+					0.46
+				],
+				"offset": [
+					0,
+					0.86,
+					0
+				],
+				"tex": null
+			},
+			{
+				"shape": "prism",
+				"size": [
+					0.5,
+					0.14,
+					0.5
+				],
+				"offset": [
+					0,
+					1.04,
+					0
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.34,
+					0.2,
+					0.24
+				],
+				"offset": [
+					0.42,
+					0.08,
+					0.38
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.28,
+					0.09,
+					0.18
+				],
+				"offset": [
+					0.42,
+					0.28,
+					0.38
+				],
+				"tex": null
+			}
+		]
+	},
+	"weaponry": {
+		"roof_style": "flat",
+		"body_frac": 0.8,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/weaponry_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.5,
+					0.08,
+					1.4
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.8,
+					0.06
+				],
+				"offset": [
+					-0.55,
+					0.08,
+					-0.4
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.8,
+					0.06
+				],
+				"offset": [
+					0.55,
+					0.08,
+					-0.4
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.8,
+					0.06
+				],
+				"offset": [
+					-0.55,
+					0.08,
+					0.4
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.06,
+					0.8,
+					0.06
+				],
+				"offset": [
+					0.55,
+					0.08,
+					0.4
+				],
+				"tex": null
+			},
+			{
+				"shape": "ramp",
+				"size": [
+					1.3,
+					0.14,
+					1.0
+				],
+				"offset": [
+					0,
+					0.84,
+					0
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.05,
+					0.7,
+					0.05
+				],
+				"offset": [
+					-0.38,
+					0.08,
+					0.28
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.05,
+					0.7,
+					0.05
+				],
+				"offset": [
+					0.08,
+					0.08,
+					0.28
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.75,
+					0.05,
+					0.05
+				],
+				"offset": [
+					-0.15,
+					0.74,
+					0.28
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.03,
+					0.78,
+					0.03
+				],
+				"offset": [
+					-0.32,
+					0.08,
+					0.28
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.03,
+					0.72,
+					0.03
+				],
+				"offset": [
+					-0.15,
+					0.08,
+					0.28
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.03,
+					0.82,
+					0.03
+				],
+				"offset": [
+					0.02,
+					0.08,
+					0.28
+				],
+				"tex": null
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.3,
+					0.35,
+					0.3
+				],
+				"offset": [
+					0.45,
+					0.08,
+					-0.3
+				],
+				"tex": "wall",
+				"tag": "smoke"
+			}
+		],
+		"smoke_anchor": [
+			0.45,
+			0.43,
+			-0.3
+		]
+	},
+	"goldworks": {
+		"roof_style": "gable",
+		"body_frac": 0.5,
+		"tex_roof": "facade/roof_tile.png",
+		"tex_wall": "facade/goldworks_wall.png",
+		"tex_base": "facade/base_stone.png",
+		"attachments": [],
+		"blueprint": [
+			{
+				"shape": "box",
+				"size": [
+					1.5,
+					0.08,
+					1.5
+				],
+				"offset": [
+					0,
+					0,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.9,
+					0.1,
+					0.9
+				],
+				"offset": [
+					0,
+					0.02,
+					0
+				],
+				"tex": "base"
+			},
+			{
+				"shape": "cylinder",
+				"size": [
+					0.7,
+					0.6,
+					0.7
+				],
+				"offset": [
+					0,
+					0.12,
+					0
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "cylinder",
+				"size": [
+					0.5,
+					0.2,
+					0.5
+				],
+				"offset": [
+					0,
+					0.72,
+					0
+				],
+				"tex": "wall"
+			},
+			{
+				"shape": "pyramid",
+				"size": [
+					0.55,
+					0.22,
+					0.55
+				],
+				"offset": [
+					0,
+					0.92,
+					0
+				],
+				"tex": "roof"
+			},
+			{
+				"shape": "box",
+				"size": [
+					0.16,
+					1.1,
+					0.16
+				],
+				"offset": [
+					0.45,
+					0.08,
+					-0.3
+				],
+				"tex": null,
+				"tag": "smoke"
+			},
+			{
+				"shape": "cylinder",
+				"size": [
+					0.2,
+					0.18,
+					0.2
+				],
+				"offset": [
+					-0.4,
+					0.08,
+					0.35
+				],
+				"tex": null
+			}
+		],
+		"smoke_anchor": [
+			0.45,
+			1.1800000000000002,
+			-0.3
 		]
 	}
 }

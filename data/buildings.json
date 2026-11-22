@@ -170,7 +170,8 @@
 		"sells": {
 			"wine": 6,
 			"oil": 5,
-			"cloth": 8
+			"cloth": 8,
+			"weapons": 12
 		},
 		"sell_rate": 8,
 		"texture": "market",
@@ -178,7 +179,7 @@
 		"flat": false,
 		"upkeep": 2,
 		"jobs": 1,
-		"desc": "每月售卖至多 8 件货品换金钱：葡萄酒 6 金、豆油 5 金、布匹 8 金；需邻路、1 名工人",
+		"desc": "每月按上限售卖货品换钱（葡萄酒 6 金、豆油 5 金、布匹 8 金、兵器 12 金）。需邻路、1 岗位。",
 		"mesh_size": [
 			2.2,
 			1.4,
@@ -344,6 +345,65 @@
 		"mesh_size": [
 			1.5,
 			1.5,
+			1.5
+		]
+	},
+	"mine": {
+		"name": "矿场",
+		"cost_gold": 45,
+		"upkeep": 3,
+		"jobs": 2,
+		"texture": "mine",
+		"dir": true,
+		"flat": false,
+		"desc": "只能建在矿脉上：每月按人手开采 2 单位矿石入仓库，矿脉枯竭后停产（可拆除）。需邻路、2 岗位。",
+		"mesh_size": [
+			1.4,
+			1.5,
+			1.4
+		],
+		"mine_rate": 2
+	},
+	"weaponry": {
+		"name": "兵器坊",
+		"cost_gold": 60,
+		"upkeep": 3,
+		"jobs": 2,
+		"converts": [
+			{
+				"from": "iron_ore",
+				"to": "weapons",
+				"rate": 2
+			}
+		],
+		"unlock": "iron",
+		"texture": "weaponry",
+		"dir": true,
+		"flat": false,
+		"desc": "每月把 2 铁矿铸成兵器（由市集售卖 12 金/件）。采到过铁矿后解锁。需邻路、2 岗位。",
+		"mesh_size": [
+			1.5,
+			1.5,
+			1.4
+		]
+	},
+	"goldworks": {
+		"name": "炼金坊",
+		"cost_gold": 80,
+		"upkeep": 4,
+		"jobs": 1,
+		"consumes": {
+			"gold_ore": 1
+		},
+		"income": 12,
+		"unlock": "gold",
+		"texture": "goldworks",
+		"dir": true,
+		"flat": false,
+		"desc": "每月炼 1 金矿得 12 金。采到过金矿后解锁。需邻路、1 岗位。",
+		"mesh_size": [
+			1.5,
+			1.6,
 			1.5
 		]
 	}

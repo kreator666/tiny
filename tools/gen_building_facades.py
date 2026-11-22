@@ -63,6 +63,13 @@ BUILDINGS = {
                128, "wall_gray.png"),
     "woodcutter": ("lumberjack log cabin facade, rough wooden plank wall with a small window, neat stacks of chopped firewood piled high beside the door and a chopping stump",
                    128, "wall_wood.png"),
+    # 矿产线（阶段：矿脉资源系统）：矿场井架 / 兵器坊刀枪架火炉 / 炼金坊丹炉烟囱
+    "mine": ("mining pit head frame facade, heavy timber mine shaft derrick tower with a large pulley wheel at the top, wooden support beams, a small ore cart full of dark iron rocks at the base, ropes and buckets",
+             128, "wall_wood.png"),
+    "weaponry": ("ancient Chinese weapons workshop facade, open wooden shed with racks of spears halberds and swords standing in rows, a small forge furnace glowing at one side, weapon racks and a quench barrel",
+                 128, "wall_wood.png"),
+    "goldworks": ("ancient Chinese alchemy gold refining workshop facade, round clay alchemy furnace with a domed top, a tall thin chimney rising high beside it, brass vessels and a small crucible, wisps of smoke",
+                  128, "wall_gray.png"),
 }
 
 

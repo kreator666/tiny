@@ -492,6 +492,140 @@ func _add_cylinder(st: SurfaceTool, r: float, h: float, c: Vector3, seg := 8) ->
 		_quad(st, p0, p1, p1 + Vector3(0, h, 0), p0 + Vector3(0, h, 0))
 
 
+## 圆锥截体（圆台）：底半径 r0（底面在 y0）-> 顶半径 r1（顶面 y0+h），c/c_top 可错位做倾干
+func _add_taper(st: SurfaceTool, r0: float, r1: float, y0: float, h: float,
+		c: Vector3, c_top: Vector3, seg := 10) -> void:
+	for i in seg:
+		var a0 := TAU * i / seg
+		var a1 := TAU * (i + 1) / seg
+		var b0 := c + Vector3(cos(a0) * r0, y0, sin(a0) * r0)
+		var b1 := c + Vector3(cos(a1) * r0, y0, sin(a1) * r0)
+		var t1 := c_top + Vector3(cos(a1) * r1, y0 + h, sin(a1) * r1)
+		var t0 := c_top + Vector3(cos(a0) * r1, y0 + h, sin(a0) * r1)
+		_quad(st, b0, b1, t1, t0)
+
+
+# ---------- 树木（与其它建筑同套机制：程序化低模 + facade 贴图） ----------
+
+# 3 变体：高瘦 / 标准 / 矮冠。layers 每层 [底半径, 顶半径, 层高]，自干顶叠压（国画层叠树形）
+const TREE_VARIANTS: Array = [
+	{"trunk_h": 0.45, "trunk_r": 0.042, "lean": Vector2(0.04, 0.0),
+		"layers": [[0.22, 0.16, 0.38], [0.17, 0.10, 0.34], [0.11, 0.02, 0.30]]},  # 总高 ≈1.24
+	{"trunk_h": 0.35, "trunk_r": 0.05, "lean": Vector2(-0.03, 0.02),
+		"layers": [[0.30, 0.23, 0.36], [0.235, 0.15, 0.32], [0.15, 0.03, 0.28]]},  # 总高 ≈1.06
+	{"trunk_h": 0.30, "trunk_r": 0.055, "lean": Vector2(0.0, -0.03),
+		"layers": [[0.34, 0.26, 0.34], [0.27, 0.17, 0.30], [0.17, 0.04, 0.32]]},  # 总高 ≈1.02
+]
+const TREE_SURF_TRUNK := 0
+const TREE_SURF_LEAF := 1
+
+
+## 取（或生成）树木变体网格：2 surface（0 树干不透明 / 1 树冠 alpha 双面），按变体缓存共享
+func get_tree_mesh(variant: int) -> ArrayMesh:
+	var key := "tree:%d" % (variant % TREE_VARIANTS.size())
+	if _mesh_cache.has(key):
+		return _mesh_cache[key]
+	var v: Dictionary = TREE_VARIANTS[variant % TREE_VARIANTS.size()]
+	var mesh := ArrayMesh.new()
+	# surface 0：树干（细圆柱，顶心略错位 = 微倾）
+	var st_trunk := SurfaceTool.new()
+	st_trunk.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var trunk_h := float(v["trunk_h"])
+	var lean: Vector2 = v["lean"]
+	_add_taper(st_trunk, float(v["trunk_r"]), float(v["trunk_r"]) * 0.7, 0.0, trunk_h,
+		Vector3.ZERO, Vector3(lean.x, 0, lean.y), 8)
+	st_trunk.generate_normals()
+	st_trunk.commit(mesh)
+	# surface 1：树冠（三层圆台叠压，下宽上窄，层间收缩）
+	var st_leaf := SurfaceTool.new()
+	st_leaf.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var y := trunk_h - 0.05
+	for layer in (v["layers"] as Array):
+		var r0 := float(layer[0])
+		var r1 := float(layer[1])
+		var lh := float(layer[2])
+		_add_taper(st_leaf, r0, r1, y, lh, Vector3(lean.x * 0.6, 0, lean.y * 0.6),
+			Vector3(lean.x * 0.9, 0, lean.y * 0.9), 12)
+		y += lh - 0.10  # 层间叠压 0.10
+	st_leaf.generate_normals()
+	st_leaf.commit(mesh)
+	mesh.surface_set_material(TREE_SURF_TRUNK, _tree_material(TREE_SURF_TRUNK))
+	mesh.surface_set_material(TREE_SURF_LEAF, _tree_material(TREE_SURF_LEAF))
+	mesh.resource_name = key
+	_mesh_cache[key] = mesh
+	return mesh
+
+
+var _tree_mat_cache := {}
+
+
+## 树木材质：树干不透明 / 树冠 TRANSPARENCY_ALPHA 双面；贴图随素材包回退（AssetLib）
+func _tree_material(part: int) -> StandardMaterial3D:
+	if _tree_mat_cache.has(part):
+		return _tree_mat_cache[part]
+	var mat := StandardMaterial3D.new()
+	var tex: Texture2D = AssetLib.tex("facade/tree_trunk.png") if part == TREE_SURF_TRUNK \
+		else AssetLib.tex("facade/tree_leaf.png")
+	mat.albedo_texture = tex
+	if tex == null:
+		mat.albedo_color = Color(0.42, 0.55, 0.35) if part == TREE_SURF_LEAF else Color(0.45, 0.32, 0.2)
+	if part == TREE_SURF_LEAF:
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	_tree_mat_cache[part] = mat
+	return mat
+
+
+# ---------- 矿脉岩簇 ----------
+
+## 不规则石块：扰动双锥（底/顶尖 + 扰动赤道环），seed 决定形状（同类型全图共享网格）
+func _add_rock(st: SurfaceTool, r: float, h: float, c: Vector3, seed: float, seg := 7) -> void:
+	var bottom := c + Vector3(0, -h * 0.25, 0)
+	var top := c + Vector3(0, h * 0.75, 0)
+	for i in seg:
+		var a0 := TAU * i / seg
+		var a1 := TAU * (i + 1) / seg
+		var w0 := 0.75 + 0.35 * absf(sin(seed * 3.7 + i * 2.39))
+		var w1 := 0.75 + 0.35 * absf(sin(seed * 3.7 + (i + 1) * 2.39))
+		var e0 := c + Vector3(cos(a0) * r * w0, 0, sin(a0) * r * w0)
+		var e1 := c + Vector3(cos(a1) * r * w1, 0, sin(a1) * r * w1)
+		_tri(st, bottom, e1, e0)
+		_tri(st, e0, e1, top)
+
+
+## 取（或生成）矿脉岩簇网格：5 石堆叠（下大上小），贴面石纹 × 类型色调；按类型缓存共享
+func get_ore_mesh(ore_type: String) -> ArrayMesh:
+	var key := "ore:%s" % ore_type
+	if _mesh_cache.has(key):
+		return _mesh_cache[key]
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rocks := [
+		[Vector3(0, 0.09, 0), 0.17, 0.26, 1.0],
+		[Vector3(-0.13, 0.06, 0.07), 0.12, 0.18, 2.0],
+		[Vector3(0.13, 0.06, 0.08), 0.11, 0.16, 3.0],
+		[Vector3(0.02, 0.05, -0.13), 0.11, 0.15, 4.0],
+		[Vector3(-0.04, 0.20, -0.03), 0.10, 0.14, 5.0],
+	]
+	for rock in rocks:
+		_add_rock(st, rock[1], rock[2], rock[0], rock[3] + (1.0 if ore_type == "gold" else 0.0))
+	st.generate_normals()
+	var mesh := ArrayMesh.new()
+	st.commit(mesh)
+	var mat := StandardMaterial3D.new()
+	var tex: Texture2D = AssetLib.tex("facade/ore_iron.png") if ore_type == "iron" \
+		else AssetLib.tex("facade/ore_gold.png")
+	mat.albedo_texture = tex
+	mat.albedo_color = Color(0.75, 0.82, 0.92) if ore_type == "iron" else Color(1.0, 0.92, 0.72)
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	mesh.surface_set_material(0, mat)
+	mesh.resource_name = key
+	_mesh_cache[key] = mesh
+	return mesh
+
+
 ## 圆环井栏：外壁 + 内壁 + 顶面环带
 func _add_ring(st: SurfaceTool, r_out: float, r_in: float, h: float, c: Vector3, seg := 10) -> void:
 	for i in seg:

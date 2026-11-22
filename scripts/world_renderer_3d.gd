@@ -4,9 +4,12 @@ extends Node3D
 ##   地面/道路/农田 tile：y=0 水平 QuadMesh（1 格 = 1 个 3D 单位 = 48 像素）
 ##   建筑：默认 BuildingMeshFactory 程序化低模（盒体+坡屋顶+基座，UV 采样原 billboard 贴图区带），
 ##         按相机水平角以 90° 整数倍旋转对位四方向；use_meshes=false 或缺 mesh_size 时回退 Sprite3D 立牌
-##   树/行人/大院：Sprite3D 立牌，底部中心锚地，逐帧面向相机
-##   水车轮/酒楼幌子/市集旗：立牌子节点分层动画；炊烟/火焰：柔圆贴图池，
-##     相位/尺寸/颜色/透明度逐一对照原 2D _draw 公式（git HEAD:scripts/main.gd）
+##   树：与建筑同套机制（3 变体程序化低模 + facade 贴图，use_meshes=false 回退 Sprite3D 立牌）
+##   行人/大院：Sprite3D 立牌，底部中心锚地，逐帧面向相机
+##   水车（网格模式：竖直圆盘绕水平轮轴匀速转，固定朝向随建筑转面；立牌模式维持 2D 行为）/
+##   酒楼幌子/市集旗：立牌子节点分层动画；炊烟/火灾：圆盘贴图池，
+##     相位/尺寸/颜色/透明度逐一对照原 2D _draw 公式（15d325f:scripts/main.gd），
+##     出烟锚点由 blueprint 几何推导（烟囱件顶面中心 / 屋顶脊线中心，data/building_meshes.json smoke_anchor）
 ##   昼夜：DirectionalLight3D + WorldEnvironment，按 2D 同一 _nightness/_duskness 公式插值
 ##   夜间灯火：OmniLight3D 池（取离相机目标最近的若干个，控制 gl_compatibility 灯数）
 ## 世界数据全部只读自 GameState；本类不改动任何游戏状态。
@@ -17,19 +20,13 @@ const PX := 1.0 / 48.0  # 像素 -> 3D 单位换算（1 格 = 48 像素）
 const GROUND_SLAB := 28.0  # 基座平台典型厚度（像素），锚点 = 平台下缘行 - SLAB/2
 const ESTATE_CENTER := Vector2(1.0, 1.0)
 
-# 冒烟的建筑及其出烟点（画布坐标相对 (宽/2, 高)，即旧触地点；运行时按基座锚点自动补偿）
-const SMOKE_BUILDINGS := {
-	"mill": Vector2(-19, -62),
-	"winery": Vector2(-13, -71),
-	"hut": Vector2(-6, -74),
-	"tilehouse": Vector2(-2, -72),
-	"oilpress": Vector2(-28, -44),
-	"restaurant": Vector2(7, -81),
-}
+# 冒烟建筑判定：data/building_meshes.json 里带 smoke_anchor 的类型（blueprint 推导，见生成器）。
+# 旧版 SMOKE_BUILDINGS 2D 画布像素表已废弃——网格/立牌都按建筑本地锚点换算。
 
-# 磨坊水车：逐方向轮心（96x96 画布坐标，截图校订）
-const MILL_WHEEL := [Vector2(75, 57), Vector2(70, 55), Vector2(72, 52), Vector2(25, 55)]
+# 磨坊水车：网格模式 = 竖直圆盘（正交贴图 mill_wheel_disc.png）绕水平轮轴匀速旋转，
+# 轮心/朝向由 blueprint 的 wheel_axle 件推导（见 _wheel_anchor_local）；WHEEL_SPEED 同 2D。
 const WHEEL_SPEED := 0.6  # rad/s
+const WHEEL_DISC_SIZE := 1.12  # 轮盘直径（格）：轮缘底部近地面（轮心 0.74 -> 底 0.18）
 
 # 市集三角旗：逐方向 {旗杆顶挂点, 朝向(1右/-1左), 尺寸}（画布坐标；波动参数同 2D）
 const MARKET_FLAG := [
@@ -38,6 +35,8 @@ const MARKET_FLAG := [
 	{"at": Vector2(26, 3), "dir": 1.0, "size": Vector2(15, 6)},
 	{"at": Vector2(32, 3), "dir": -1.0, "size": Vector2(19, 7)},
 ]
+# 立牌模式水车：逐方向轮心画布坐标（2D 切片行为保留，仅 use_meshes=false 使用）
+const MILL_WHEEL_CANVAS := [Vector2(75, 57), Vector2(70, 55), Vector2(72, 52), Vector2(25, 55)]
 const FLAG_SEGS := 6  # 旗面分段数（同 2D 折线分段）
 
 # 酒楼幌子：逐方向顶部挂点（画布坐标）
@@ -65,10 +64,13 @@ var _factory := BuildingMeshFactory.new()
 var ground_tex: Array = []  # [ground_0, ground_1]
 var tree_tex: Texture2D
 var villager_tex: Texture2D
+var ore_sprite_tex: Dictionary = {}  # iron/gold -> 矿脉立牌贴图（use_meshes=false）
 var road_tex: Dictionary = {}  # 方向键 -> Texture2D，键同 ROAD_KEYS
 var estate_tex: Dictionary = {}  # 等级 2/3 -> [d0..d3]
-var mill_wheel_tex: Array = []  # 水车转轮层 [d0..d3]
-var mill_front_tex: Array = []  # 水车前景层（石柱/水流，保持静止）
+var mill_wheel_tex: Array = []  # 水车转轮层 [d0..d3]（立牌模式用，2D 切片）
+var mill_front_tex: Array = []  # 水车前景层（石柱/水流，立牌模式用，保持静止）
+var mill_disc_tex: Texture2D  # 水车正交圆盘（网格模式用，tools/gen_mill_wheel_disc.py 生成）
+var smoke_puff_tex: Texture2D  # 柔和烟团（tools/gen_smoke_puff.py 生成；颜色按 2D 公式 modulate）
 var rest_banner_tex: Array = []  # 酒楼幌子 [d0..d3]
 
 const ROAD_KEYS: Array = ["o", "n", "e", "s", "w", "ne", "ns", "nw", "es", "ew", "sw", "nes", "new", "nsw", "esw", "nesw"]
@@ -103,8 +105,9 @@ var _road_path_quads: Array = []
 var _anchor_cache := {}
 var _mat_cache := {}
 var _unit_quad: QuadMesh
+var _wheel_disc_quad: QuadMesh  # 水车圆盘网格（网格模式，固定朝向）
 var _quad_flat_transform := Basis(Vector3(1, 0, 0), -PI / 2.0)  # XY 单位 Quad -> 铺地
-var _puff_tex: ImageTexture
+var _puff_tex: Texture2D
 var _flame_tex: ImageTexture
 
 
@@ -113,7 +116,7 @@ func _ready() -> void:
 	_load_mesh_params()
 	_unit_quad = QuadMesh.new()
 	_unit_quad.size = Vector2.ONE
-	_puff_tex = _make_radial_tex()
+	_puff_tex = smoke_puff_tex
 	_flame_tex = _make_flame_tex()
 	_build_environment()
 	_build_ground()
@@ -156,7 +159,7 @@ func update_dynamic() -> void:
 	var night := _nightness()
 	_update_walkers(cam_pos)
 	_update_buildings(cam_pos)
-	_update_effects()
+	_update_effects(cam_pos)
 	_update_markers(cam_pos)
 	_update_daynight(night)
 	_update_night_lights(night)
@@ -183,6 +186,8 @@ func _load_pack_textures() -> void:
 	ground_tex = [AssetLib.tex("ground_0.png"), AssetLib.tex("ground_1.png")]
 	tree_tex = AssetLib.tex("tree.png")
 	villager_tex = AssetLib.tex("villager.png")
+	ore_sprite_tex = {"iron": AssetLib.tex("facade/ore_iron_sprite.png"),
+		"gold": AssetLib.tex("facade/ore_gold_sprite.png")}
 	for k: String in ROAD_KEYS:
 		road_tex[k] = AssetLib.tex("road_%s.png" % k)
 	estate_tex = {2: [], 3: []}
@@ -193,6 +198,8 @@ func _load_pack_textures() -> void:
 		mill_wheel_tex.append(AssetLib.tex("mill_wheel_d%d.png" % i))
 		mill_front_tex.append(AssetLib.tex("mill_front_d%d.png" % i))
 		rest_banner_tex.append(AssetLib.tex("rest_banner_d%d.png" % i))
+	mill_disc_tex = AssetLib.tex("facade/mill_wheel_disc.png")
+	smoke_puff_tex = AssetLib.tex("facade/smoke_puff.png")
 
 
 func _load_mesh_params() -> void:
@@ -236,18 +243,8 @@ func _blend_mat(tex: Texture2D = null) -> StandardMaterial3D:
 	return mat
 
 
-func _make_radial_tex() -> ImageTexture:
-	## 程序生成的柔圆贴图（炊烟用，颜色经 Sprite3D.modulate 调制）
-	var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
-	for y in 32:
-		for x in 32:
-			var d := Vector2(x - 15.5, y - 15.5).length() / 16.0
-			var a := clampf(1.0 - d, 0.0, 1.0)
-			a *= a
-			img.set_pixel(x, y, Color(1, 1, 1, a))
-	return ImageTexture.create_from_image(img)
-
-
+## 烟团贴图（柔和化方案）：低频平滑、抗 mipmap 像素饼；由 tools/gen_smoke_puff.py 生成。
+## 火焰轮廓贴图：上尖下宽的三角柔边（近似 2D 火苗三角形的 3D 替代）
 func _make_flame_tex() -> ImageTexture:
 	## 火焰轮廓贴图：上尖下宽的三角柔边（近似 2D 火苗三角形的 3D 替代）
 	var img := Image.create(32, 32, false, Image.FORMAT_RGBA8)
@@ -326,6 +323,72 @@ func _road_tex(cell: Vector2i) -> Texture2D:
 
 
 # ---------- 环境 / 光照 ----------
+
+## 水车圆盘网格（网格模式）：正交贴图 + 透明裁剪，双面；轮轴沿建筑本地 X（轮盘面在 YZ 平面）
+func _get_wheel_disc_quad() -> QuadMesh:
+	if _wheel_disc_quad == null:
+		_wheel_disc_quad = QuadMesh.new()
+		_wheel_disc_quad.size = Vector2(WHEEL_DISC_SIZE, WHEEL_DISC_SIZE)
+		var mat := StandardMaterial3D.new()
+		mat.albedo_texture = mill_disc_tex
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+		mat.alpha_scissor_threshold = 0.5
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+		_wheel_disc_quad.material = mat
+	return _wheel_disc_quad
+
+
+## 水车轮心（建筑本地坐标）：blueprint 里 wheel_axle 件的外端中心（轮盘面位置）
+func _wheel_anchor_local() -> Vector3:
+	for part: Dictionary in (_factory.params.get("mill", {}).get("blueprint", []) as Array):
+		if str(part.get("tag", "")) == "wheel_axle":
+			var o: Array = part["offset"]
+			var s: Array = part["size"]
+			return Vector3(float(o[0]) + float(s[0]), float(o[1]) + float(s[1]) / 2.0, float(o[2]))
+	return Vector3(1.2, 0.74, 0.35)  # 锚点缺失时的安全回退（与生成器一致）
+
+
+## 出烟锚点（建筑本地坐标）：data/building_meshes.json 的 smoke_anchor（生成期从 blueprint 推导）
+func _smoke_anchor_local(btype: String) -> Vector3:
+	var a: Array = _factory.params.get(btype, {}).get("smoke_anchor", [0.0, 1.0, 0.0])
+	return Vector3(float(a[0]), float(a[1]), float(a[2]))
+
+
+## 水井辘轳横杆中心（建筑本地坐标）：blueprint 里 well_axle 件（吊桶绳/桶挂点）
+func _well_axle_local() -> Vector3:
+	for part: Dictionary in (_factory.params.get("well", {}).get("blueprint", []) as Array):
+		if str(part.get("tag", "")) == "well_axle":
+			var o: Array = part["offset"]
+			var s: Array = part["size"]
+			return Vector3(float(o[0]), float(o[1]) + float(s[1]) / 2.0, float(o[2]))
+	return Vector3(0, 0.705, 0)  # 锚点缺失时的安全回退（与生成器一致）
+
+
+var _rope_mat_single: StandardMaterial3D
+var _bucket_mesh_single: CylinderMesh
+
+
+func _rope_mat() -> StandardMaterial3D:
+	if _rope_mat_single == null:
+		_rope_mat_single = StandardMaterial3D.new()
+		_rope_mat_single.albedo_color = Color(0.38, 0.28, 0.18)
+		_rope_mat_single.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_rope_mat_single.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return _rope_mat_single
+
+
+## 吊桶小木桶（共享网格）：上粗下细圆筒，赭褐木色
+func _get_bucket_mesh() -> CylinderMesh:
+	if _bucket_mesh_single == null:
+		_bucket_mesh_single = CylinderMesh.new()
+		_bucket_mesh_single.top_radius = 0.05
+		_bucket_mesh_single.bottom_radius = 0.04
+		_bucket_mesh_single.height = 0.09
+		var m := StandardMaterial3D.new()
+		m.albedo_color = Color(0.45, 0.32, 0.2)
+		_bucket_mesh_single.material = m
+	return _bucket_mesh_single
 
 func _build_environment() -> void:
 	_world_env = WorldEnvironment.new()
@@ -417,10 +480,22 @@ func _build_ground() -> void:
 			mm.set_instance_transform(i, Transform3D(_quad_flat_transform, Vector3(cell.x + 0.5, 0.0, cell.y + 0.5)))
 		var mmi := MultiMeshInstance3D.new()
 		mmi.multimesh = mm
+		# MultiMeshInstance3D 不按实例变换计算 AABB（默认零体积），显式覆盖全图防误剔除
+		mmi.custom_aabb = AABB(Vector3(0, -1.0, 0),
+			Vector3(float(GameState.GRID_W), 2.0, float(GameState.GRID_H)))
 		mmi.material_override = _billboard_mat(ground_tex[v])
 		add_child(mmi)
 		_ground_mm.append(mmi)
 
+
+
+## 贴地 Quad 池实例的 custom_aabb：QuadMesh AABB 在本地 z 向零厚度（压平后世界 y 零厚度），
+## 相机平移/低角度时退化 AABB 与视锥面求交会被误判剔除——给本地 z ±0.25 厚度根治
+const FLAT_QUAD_AABB := AABB(Vector3(-0.5, -0.5, -0.25), Vector3(1.0, 1.0, 0.5))
+
+
+func _set_flat_quad_aabb(mi: MeshInstance3D) -> void:
+	mi.custom_aabb = FLAT_QUAD_AABB
 
 func _sync_flat_tiles() -> void:
 	## 道路/农田/flat 建筑：按 state.buildings 增删贴地 Quad 池
@@ -447,6 +522,7 @@ func _sync_flat_tiles() -> void:
 		if mi == null:
 			mi = MeshInstance3D.new()
 			mi.mesh = _unit_quad
+			_set_flat_quad_aabb(mi)  # 防视锥误剔除（退化 AABB）
 			_flat_root.add_child(mi)
 			_flat_tiles[cell] = mi
 			mi.transform = Transform3D(_quad_flat_transform, Vector3(cell.x + 0.5, 0.0, cell.y + 0.5))
@@ -458,16 +534,29 @@ func _sync_flat_tiles() -> void:
 # ---------- 建筑/树/大院（网格立牌双模式） ----------
 
 func _use_mesh_for(kind: String) -> bool:
-	if not use_meshes or kind == "tree" or kind == "estate":
+	if not use_meshes or kind == "estate":
 		return false
+	if kind == "tree" or kind == "ore_iron" or kind == "ore_gold":
+		return true  # 树/矿脉与建筑同套机制：程序化低模 + facade 贴图
 	var def: Dictionary = state.building_defs.get(kind, {})
 	return def.has("mesh_size") and not bool(def.get("flat", false))
+
+
+## 树变体选择：格位哈希（稳定），yaw 随机增加自然感
+func _tree_variant(cell: Vector2i) -> int:
+	return int(abs(cell.x * 7 + cell.y * 13)) % 3
+
+
+func _tree_yaw(cell: Vector2i) -> float:
+	return float((cell.x * 31 + cell.y * 17) % 628) / 100.0  # 0..6.28 rad
 
 
 func _sync_billboards() -> void:
 	var want := {}
 	for cell: Vector2i in state.trees:
 		want["t:%s" % cell] = {"kind": "tree", "cell": cell}
+	for cell: Vector2i in state.ores:
+		want["o:%s" % cell] = {"kind": "ore_" + str(state.ores[cell]["type"]), "cell": cell}
 	for cell: Vector2i in state.buildings:
 		var btype: String = state.buildings[cell]
 		if not bool(state.building_defs[btype].get("flat", false)):
@@ -494,6 +583,7 @@ func _make_billboard(kind: String, cell: Vector2i) -> Dictionary:
 	var entry := {"root": root, "visual": null, "visual_kind": "", "kind": kind,
 		"cell": cell, "anchor": Vector2.ZERO, "extras": {"sign": sign}}
 	if kind == "mill":
+		# 立牌模式（2D 行为）：切片轮自转 + 前景遮挡层
 		var wheel := Sprite3D.new()
 		wheel.pixel_size = PX
 		wheel.shaded = true
@@ -502,7 +592,17 @@ func _make_billboard(kind: String, cell: Vector2i) -> Dictionary:
 		front.pixel_size = PX
 		front.shaded = true
 		sign.add_child(front)
-		entry.extras = {"sign": sign, "wheel": wheel, "front": front}
+		# 网格模式：竖直圆盘绕水平轮轴（建筑本地 X）旋转；holder 定轮心/转面，spinner 自转
+		var wheel_holder := Node3D.new()
+		root.add_child(wheel_holder)
+		var wheel_spinner := Node3D.new()
+		wheel_holder.add_child(wheel_spinner)
+		var wheel_disc := MeshInstance3D.new()
+		wheel_disc.mesh = _get_wheel_disc_quad()
+		wheel_disc.rotation = Vector3(0, PI / 2.0, 0)  # quad 法线 +z -> 建筑本地 +x（垂直墙面）
+		wheel_spinner.add_child(wheel_disc)
+		entry.extras = {"sign": sign, "wheel": wheel, "front": front,
+			"wheel_holder": wheel_holder, "wheel_spinner": wheel_spinner, "wheel_disc": wheel_disc}
 	elif kind == "restaurant":
 		var pivot := Node3D.new()
 		sign.add_child(pivot)
@@ -516,9 +616,31 @@ func _make_billboard(kind: String, cell: Vector2i) -> Dictionary:
 		for i in FLAG_SEGS:
 			var strip := MeshInstance3D.new()
 			strip.mesh = _unit_quad
+			_set_flat_quad_aabb(strip)  # 防视锥误剔除（退化 AABB）
 			sign.add_child(strip)
 			strips.append(strip)
 		entry.extras = {"sign": sign, "strips": strips}
+	elif kind == "well":
+		# 作业效果（网格模式）：挑水夫立牌 + 辘轳吊桶（绳 + 小木桶）循环打水。
+		# 口径与逻辑层一致：employed.get(cell,0) > 0（邻路且有劳力）才显示，无人时安静。
+		var work_root := Node3D.new()
+		work_root.visible = false
+		root.add_child(work_root)
+		var worker := Sprite3D.new()
+		worker.pixel_size = PX
+		worker.shaded = true
+		worker.texture = villager_tex
+		worker.modulate = Color(0.62, 0.8, 0.98)  # 挑水夫：蓝（同 2D 行人配色表）
+		work_root.add_child(worker)
+		var rope := MeshInstance3D.new()
+		rope.mesh = _unit_quad
+		rope.material_override = _rope_mat()
+		work_root.add_child(rope)
+		var bucket := MeshInstance3D.new()
+		bucket.mesh = _get_bucket_mesh()
+		work_root.add_child(bucket)
+		entry.extras = {"sign": sign, "work_root": work_root, "worker": worker,
+			"rope": rope, "bucket": bucket}
 	return entry
 
 
@@ -530,11 +652,14 @@ func _refresh_billboard(entry: Dictionary) -> void:
 	match kind:
 		"tree":
 			tex = tree_tex
+		"ore_iron", "ore_gold":
+			tex = ore_sprite_tex[kind.get_slice("_", 1)]
 		"estate":
 			tex = estate_tex[state.estates[cell]][_cur_dir]
 		_:
 			tex = _building_tex(kind)
-	entry.anchor = _ground_anchor(tex) if kind != "tree" else Vector2(tex.get_width() / 2.0, tex.get_height())
+	entry.anchor = _ground_anchor(tex) if (kind != "tree" and not kind.begins_with("ore_")) \
+		else Vector2(tex.get_width() / 2.0, tex.get_height())
 	var root: Node3D = entry.root
 	var pos := Vector3.ZERO
 	match kind:
@@ -560,13 +685,24 @@ func _refresh_billboard(entry: Dictionary) -> void:
 		root.add_child(entry.visual)
 		entry.visual_kind = want_kind
 	if want_kind == "mesh":
-		var def: Dictionary = state.building_defs[kind]
+		var def: Dictionary = state.building_defs.get(kind, {})
 		var mi: MeshInstance3D = entry.visual
-		mi.mesh = _factory.get_mesh(kind, def)
-		mi.material_override = null  # 纯色材质按 surface 挂载，避免被贴图覆盖
-		for si in mi.mesh.get_surface_count():
-			mi.set_surface_override_material(si, _factory.get_material(kind, si, tint, def))
-		mi.rotation = Vector3(0, _cur_dir * PI / 2.0, 0)  # 四方向：90° 整数倍对位
+		if kind == "tree":
+			# 树：3 变体共享网格（工厂缓存），格位哈希选变体 + 随机 yaw；材质随网格 surface
+			mi.mesh = _factory.get_tree_mesh(_tree_variant(cell))
+			mi.material_override = null
+			mi.rotation = Vector3(0, _tree_yaw(cell), 0)
+		elif kind == "ore_iron" or kind == "ore_gold":
+			# 矿脉：low-poly 岩簇（工厂缓存），随机 yaw；立牌模式为剪影贴图
+			mi.mesh = _factory.get_ore_mesh(kind.get_slice("_", 1))
+			mi.material_override = null
+			mi.rotation = Vector3(0, _tree_yaw(cell), 0)
+		else:
+			mi.mesh = _factory.get_mesh(kind, def)
+			mi.material_override = null  # 纯色材质按 surface 挂载，避免被贴图覆盖
+			for si in mi.mesh.get_surface_count():
+				mi.set_surface_override_material(si, _factory.get_material(kind, si, tint, def))
+			mi.rotation = Vector3(0, _cur_dir * PI / 2.0, 0)  # 四方向：90° 整数倍对位
 	else:
 		var sprite2: Sprite3D = entry.visual
 		sprite2.texture = tex
@@ -576,15 +712,29 @@ func _refresh_billboard(entry: Dictionary) -> void:
 	# 分层附加物（画布锚点换算，坐标挂在 root/sign 本地）
 	var extras: Dictionary = entry.extras
 	if extras.has("wheel"):
-		var anchor: Vector2 = entry.anchor
-		var wc: Vector2 = MILL_WHEEL[_cur_dir] - anchor  # 轮心画布点（boff = -anchor）
-		extras.wheel.position = _canvas_local(wc, anchor) + Vector3(0, 0, 0.01)
-		extras.wheel.texture = mill_wheel_tex[_cur_dir]
-		extras.wheel.material_override = _billboard_mat(mill_wheel_tex[_cur_dir], tint)
-		var fc: Vector2 = MILL_WHEEL[_cur_dir] - anchor
-		extras.front.position = _canvas_local(fc, anchor) + Vector3(0, 0, 0.02)
-		extras.front.texture = mill_front_tex[_cur_dir]
-		extras.front.material_override = _billboard_mat(mill_front_tex[_cur_dir], tint)
+		if entry.visual_kind == "mesh":
+			# 网格模式：水车 = 固定朝向竖直圆盘，随建筑 90° 转面；不做 camera billboard。
+			# 轮心 = blueprint 轮轴件外端中心（建筑本地），随建筑 yaw 旋转；前景切片层隐藏。
+			extras.wheel.visible = false
+			extras.front.visible = false
+			extras.wheel_holder.visible = true
+			var rot := Basis(Vector3.UP, _cur_dir * PI / 2.0)
+			extras.wheel_holder.position = rot * _wheel_anchor_local()
+			extras.wheel_holder.rotation = Vector3(0, _cur_dir * PI / 2.0, 0)
+		else:
+			# 立牌模式：维持 2D 行为（切片轮面向相机自转 + 前景遮挡层）
+			extras.wheel_holder.visible = false
+			extras.wheel.visible = true
+			extras.front.visible = true
+			var anchor: Vector2 = entry.anchor
+			var wc: Vector2 = MILL_WHEEL_CANVAS[_cur_dir] - anchor  # 轮心画布点（boff = -anchor）
+			extras.wheel.position = _canvas_local(wc, anchor) + Vector3(0, 0, 0.01)
+			extras.wheel.texture = mill_wheel_tex[_cur_dir]
+			extras.wheel.material_override = _billboard_mat(mill_wheel_tex[_cur_dir], tint)
+			var fc: Vector2 = MILL_WHEEL_CANVAS[_cur_dir] - anchor
+			extras.front.position = _canvas_local(fc, anchor) + Vector3(0, 0, 0.02)
+			extras.front.texture = mill_front_tex[_cur_dir]
+			extras.front.material_override = _billboard_mat(mill_front_tex[_cur_dir], tint)
 	if extras.has("pivot"):
 		var anchor2: Vector2 = entry.anchor
 		var hang: Vector2 = REST_BANNER[_cur_dir] - anchor2
@@ -628,9 +778,13 @@ func _update_buildings(cam_pos: Vector3) -> void:
 			root.look_at(cam_pos, Vector3.UP)
 		var cell: Vector2i = entry.cell
 		if extras.has("wheel"):
-			var wheel: Sprite3D = extras.wheel
-			wheel.look_at(cam_pos, Vector3.UP)
-			wheel.rotate_z(_anim_t * WHEEL_SPEED)  # 绕轮心（本地原点）自转
+			if entry.visual_kind == "mesh":
+				# 网格模式：绕轮轴（建筑本地 X）匀速旋转，轮心不动（绝对角度，随向切换无跳变）
+				extras.wheel_spinner.rotation = Vector3(_anim_t * WHEEL_SPEED, 0, 0)
+			else:
+				var wheel: Sprite3D = extras.wheel
+				wheel.look_at(cam_pos, Vector3.UP)
+				wheel.rotate_z(_anim_t * WHEEL_SPEED)  # 绕轮心（本地原点）自转
 		var sign: Node3D = extras.sign
 		if extras.has("pivot"):
 			sign.look_at(cam_pos, Vector3.UP)
@@ -638,6 +792,53 @@ func _update_buildings(cam_pos: Vector3) -> void:
 		if extras.has("strips"):
 			sign.look_at(cam_pos, Vector3.UP)
 			_update_flag_strips(sign, cell, extras.strips)
+		if extras.has("work_root"):
+			# 水井作业：网格模式 + 在岗（employed>0，同 _work_efficiency 口径）才显示；
+			# 节点组随建筑 90° 转面，桶/绳动画在 _update_well_work 逐帧驱动
+			var staffed: bool = entry.visual_kind == "mesh" and int(state.employed.get(cell, 0)) > 0
+			extras.work_root.visible = staffed
+			if staffed:
+				extras.work_root.rotation = Vector3(0, _cur_dir * PI / 2.0, 0)
+				_update_well_work(extras, cell, cam_pos)
+
+
+## 打水周期（秒）与吊桶下限（桶底停于井栏上方，不出栏）
+const WELL_WORK_PERIOD := 3.6
+const WELL_BUCKET_BOTTOM := 0.34
+
+
+## 吊桶循环：摇下（0~0.35）-> 停顿（0.35~0.5）-> 提上（0.5~0.85）-> 停顿（0.85~1）
+func _well_cycle_y(u: float, axle_y: float) -> float:
+	if u < 0.35:
+		return lerpf(axle_y, WELL_BUCKET_BOTTOM, _smooth01(u / 0.35))
+	if u < 0.5:
+		return WELL_BUCKET_BOTTOM
+	if u < 0.85:
+		return lerpf(WELL_BUCKET_BOTTOM, axle_y, _smooth01((u - 0.5) / 0.35))
+	return axle_y
+
+
+func _smooth01(x: float) -> float:
+	return x * x * (3.0 - 2.0 * x)
+
+
+func _update_well_work(extras: Dictionary, cell: Vector2i, cam_pos: Vector3) -> void:
+	var axle := _well_axle_local()
+	# 每口井按格位错开相位，避免整齐划一
+	var u := fmod(_anim_t / WELL_WORK_PERIOD + cell.x * 0.37 + cell.y * 0.11, 1.0)
+	var y := _well_cycle_y(u, axle.y)
+	extras.bucket.position = Vector3(axle.x, y, axle.z)
+	var rope_len := axle.y - y
+	extras.rope.scale = Vector3(0.012, maxf(rope_len, 0.001), 1.0)
+	extras.rope.position = Vector3(axle.x, axle.y - rope_len * 0.5, axle.z)
+	# 挑水夫：面向相机立于井亭旁；提上阶段轻微俯身（y 下沉）
+	var lift := 0.0
+	if u >= 0.5 and u < 0.85:
+		lift = _smooth01((u - 0.5) / 0.35)
+	var worker: Sprite3D = extras.worker
+	worker.position = Vector3(axle.x - 0.38,
+		villager_tex.get_height() * PX * 0.5 - 0.025 * lift, axle.z + 0.32)
+	worker.look_at(cam_pos, Vector3.UP)
 
 
 func _update_flag_strips(sign: Node3D, cell: Vector2i, strips: Array) -> void:
@@ -696,7 +897,7 @@ func _update_walkers(cam_pos: Vector3) -> void:
 
 # ---------- 炊烟 / 火焰（公式逐一对照 2D） ----------
 
-func _take_puff(tex: ImageTexture) -> Sprite3D:
+func _take_puff(tex: Texture2D) -> Sprite3D:
 	for p: Sprite3D in _puff_pool:
 		if not p.visible:
 			p.visible = true
@@ -717,13 +918,13 @@ func _sync_effects() -> void:
 		for sp: Sprite3D in e.sprites:
 			sp.visible = false
 	_effects.clear()
-	# 炊烟来源（上限内取离相机目标最近的建筑）
+	# 炊烟来源（上限内取离相机目标最近的建筑；名单 = 带 smoke_anchor 的建筑）
 	var sources: Array = []
 	for cell: Vector2i in state.buildings:
 		var btype: String = state.buildings[cell]
 		if state.burning.has(cell):
 			_add_fire_effect(cell, btype)
-		elif SMOKE_BUILDINGS.has(btype):
+		elif _factory.params.get(btype, {}).has("smoke_anchor"):
 			sources.append(cell)
 	var tgt: Vector3 = camera.target
 	sources.sort_custom(func(a: Vector2i, b: Vector2i) -> bool:
@@ -733,54 +934,74 @@ func _sync_effects() -> void:
 
 
 func _smoke_origin(cell: Vector2i, btype: String) -> Vector3:
+	## 出烟点：建筑实例世界位置 + blueprint 推导锚点（建筑本地坐标）。
+	## 网格模式随建筑 yaw（90°×n）旋转；立牌模式按画布锚点换算（z=0 立牌平面）。
+	var base := Vector3(cell.x + 0.5, 0, cell.y + 0.5)
+	var anchor := _smoke_anchor_local(btype)
+	if _use_mesh_for(btype):
+		return base + Basis(Vector3.UP, _cur_dir * PI / 2.0) * anchor
 	var btex := _building_tex(btype)
-	var anchor := _ground_anchor(btex)
-	# 2D：SMOKE_BUILDINGS + (0, 贴图高 + boff.y)，boff = -anchor
-	var p: Vector2 = SMOKE_BUILDINGS[btype] + Vector2(0, btex.get_height() - anchor.y)
-	return Vector3(cell.x + 0.5, 0, cell.y + 0.5) + _canvas_local(p, anchor)
+	var ga := _ground_anchor(btex)
+	var p := Vector2(ga.x + anchor.x / PX, ga.y - anchor.y / PX)
+	return base + _canvas_local(p, ga)
 
 
 func _add_smoke_effect(cell: Vector2i) -> void:
-	# 2D 每相位两圆：外圈 r*1.4 (0.48,0.50,0.54) + 亮芯 r*0.8 (0.72,0.73,0.76)
+	# 2D 每相位双圆层改为：每相位 3 个错位小 quad 叠加成弥散烟团（共 9 精灵）
 	var origin := _smoke_origin(cell, state.buildings[cell])
 	var sprites: Array = []
-	for k in 6:
+	for k in 9:
 		sprites.append(_take_puff(_puff_tex))
 	_effects.append({"kind": "smoke", "sprites": sprites, "origin": origin})
 
 
 func _add_fire_effect(cell: Vector2i, btype: String) -> void:
-	var btex := _building_tex(btype)
-	var anchor := _ground_anchor(btex)
-	var top_local := (anchor.y - 6.0) * PX  # 2D：boff.y + 6 之上的跳焰
-	var origin := Vector3(cell.x + 0.5, top_local, cell.y + 0.5)
-	# 3 簇火苗 x（外层橙 + 黄心）+ 3 团黑烟
+	## 火灾原点：建筑顶部。网格模式取 blueprint 锚点高度（随 yaw 旋转）；立牌模式按画布底部 +6px（同 2D）
+	var base := Vector3(cell.x + 0.5, 0, cell.y + 0.5)
+	var top_local: float
+	if _use_mesh_for(btype):
+		top_local = (Basis(Vector3.UP, _cur_dir * PI / 2.0) * _smoke_anchor_local(btype)).y
+	else:
+		var btex := _building_tex(btype)
+		var anchor := _ground_anchor(btex)
+		top_local = (anchor.y - 6.0) * PX  # 2D：boff.y + 6 之上的跳焰
+	var origin := base + Vector3(0, top_local, 0)
+	# 3 簇火苗 x（外层橙 + 黄心）+ 3 相位黑烟团（每团 3 个错位小 quad，共 9）
 	var sprites: Array = []
-	for k in 9:
+	for k in 15:
 		sprites.append(_take_puff(_flame_tex if k < 6 else _puff_tex))
 	_effects.append({"kind": "fire", "sprites": sprites, "origin": origin})
 
 
-func _update_effects() -> void:
-	## 2D 原公式（git HEAD:scripts/main.gd _draw_smoke/_draw_flames/_draw_fire_smoke）：
+func _update_effects(cam_pos: Vector3) -> void:
+	## 2D 原公式（15d325f:scripts/main.gd _draw_smoke/_draw_flames/_draw_fire_smoke）：
 	## 烟圈 ph=t*0.4+k/3 周期，r=3+6ph，上浮 30px，x 摆动 sin(t*1.7+k*2.1)*3ph
 	## 火苗 h=12+7sin(t*11+i*2.3)，倾摆 lean=3sin(t*7+i*1.7)，外橙内黄双层三角
 	## 火烟 ph=t*0.5+k/3，r=5+13ph，上浮 8+42px，x 摆动 sin(t*1.3+k*2.4)*4ph
+	## 柔和化方案：相位/上升/摆动/半径公式不变；每相位由 3 个错位小 quad 叠加成弥散团
+	## （替代硬边双圆层），透明度峰值 0.55->0.4，烟团面向相机。
+	const SUB_A: Array = [0.65, 0.5, 0.4]  # 子 quad 透明度权重
+	const SUB_S: Array = [0.72, 0.56, 0.44]  # 子 quad 尺寸权重
+	const SUB_LUM: Array = [0.56, 0.62, 0.70]  # 团内亮度微差（替代 2D 外圈/亮芯双层）
 	for e: Dictionary in _effects:
 		var origin: Vector3 = e.origin
 		if e.kind == "smoke":
 			for k in 3:
-				var sp: Sprite3D = e.sprites[k]
-				var core: Sprite3D = e.sprites[3 + k]
 				var ph := fmod(_anim_t * 0.4 + k / 3.0, 1.0)
 				var r := 3.0 + 6.0 * ph
-				var px: float = sin(_anim_t * 1.7 + k * 2.1) * 3.0 * ph
-				sp.position = origin + Vector3(px * PX, 30.0 * ph * PX, 0)
-				sp.scale = Vector3((r * 2.8) / 32.0, (r * 2.8) / 32.0, 1)  # 直径 r*1.4*2
-				sp.modulate = Color(0.48, 0.50, 0.54, 0.55 * (1.0 - ph))
-				core.position = sp.position
-				core.scale = Vector3((r * 1.6) / 32.0, (r * 1.6) / 32.0, 1)  # 直径 r*0.8*2
-				core.modulate = Color(0.72, 0.73, 0.76, 0.4 * (1.0 - ph))
+				var base_pos := origin + Vector3(
+					sin(_anim_t * 1.7 + k * 2.1) * 3.0 * ph * PX, 30.0 * ph * PX, 0)
+				var base_alpha := 0.4 * (1.0 - ph)  # 峰值 0.55->0.4，柔和弥散
+				for j in 3:
+					var sp: Sprite3D = e.sprites[k * 3 + j]
+					var ox := cos(k * 2.1 + j * 2.4) * r * 0.22 * PX
+					var oy := sin(k * 2.1 + j * 2.4) * r * 0.18 * PX
+					sp.position = base_pos + Vector3(ox, oy, 0.001 * j)
+					var s := (r * 2.8 * float(SUB_S[j])) / 64.0  # 64px 贴图 -> 直径 r*2.8*SUB_S
+					sp.scale = Vector3(s, s, 1)
+					var lum := float(SUB_LUM[j])
+					sp.modulate = Color(lum, lum + 0.02, lum + 0.04, float(SUB_A[j]) * base_alpha)
+					sp.look_at(cam_pos, Vector3.UP)
 		else:
 			for i in 3:
 				var outer: Sprite3D = e.sprites[i * 2]
@@ -798,13 +1019,21 @@ func _update_effects() -> void:
 				inner.rotation.z = -atan(lean * 0.6 / (h * 0.55))
 				inner.modulate = Color(1.0, 0.85, 0.3, 0.95)
 			for k in 3:
-				var sp2: Sprite3D = e.sprites[6 + k]
 				var ph2 := fmod(_anim_t * 0.5 + k / 3.0, 1.0)
 				var r2 := 5.0 + 13.0 * ph2
-				sp2.position = origin + Vector3(sin(_anim_t * 1.3 + k * 2.4) * 4.0 * ph2 * PX, (8.0 + 42.0 * ph2) * PX, 0)
-				var s2 := (r2 * 2.0) / 32.0
-				sp2.scale = Vector3(s2, s2, 1)
-				sp2.modulate = Color(0.12, 0.11, 0.12, 0.55 * (1.0 - ph2))
+				var base_pos2 := origin + Vector3(
+					sin(_anim_t * 1.3 + k * 2.4) * 4.0 * ph2 * PX, (8.0 + 42.0 * ph2) * PX, 0)
+				var base_alpha2 := 0.4 * (1.0 - ph2)
+				for j2 in 3:
+					var sp3: Sprite3D = e.sprites[6 + k * 3 + j2]
+					var ox2 := cos(k * 2.4 + j2 * 2.4) * r2 * 0.22 * PX
+					var oy2 := sin(k * 2.4 + j2 * 2.4) * r2 * 0.18 * PX
+					sp3.position = base_pos2 + Vector3(ox2, oy2, 0.001 * j2)
+					var s2 := (r2 * 2.0 * float(SUB_S[j2])) / 64.0  # 2D 直径 r*2
+					sp3.scale = Vector3(s2, s2, 1)
+					sp3.modulate = Color(0.12, 0.11, 0.12, float(SUB_A[j2]) * base_alpha2)
+					sp3.look_at(cam_pos, Vector3.UP)
+
 
 
 # ---------- 悬停 / 选中标记 ----------
@@ -812,10 +1041,12 @@ func _update_effects() -> void:
 func _build_markers() -> void:
 	_hover_quad = MeshInstance3D.new()
 	_hover_quad.mesh = _unit_quad
+	_set_flat_quad_aabb(_hover_quad)  # 防视锥误剔除（退化 AABB）
 	_hover_quad.visible = false
 	add_child(_hover_quad)
 	_ghost_flat = MeshInstance3D.new()
 	_ghost_flat.mesh = _unit_quad
+	_set_flat_quad_aabb(_ghost_flat)  # 防视锥误剔除（退化 AABB）
 	_ghost_flat.visible = false
 	add_child(_ghost_flat)
 	_ghost = Node3D.new()  # 幽灵容器：内含 Sprite3D（立牌）与 MeshInstance3D（网格）二选一
@@ -831,6 +1062,7 @@ func _build_markers() -> void:
 	for i in 4:
 		var bar := MeshInstance3D.new()
 		bar.mesh = _unit_quad
+		_set_flat_quad_aabb(bar)  # 防视锥误剔除（退化 AABB）
 		bar.material_override = _flag_mat_for(Color(1.0, 0.88, 0.35, 0.9))
 		bar.visible = false
 		add_child(bar)
@@ -850,6 +1082,7 @@ func sync_road_path(cells: Array) -> void:
 	while _road_path_quads.size() < cells.size():
 		var q := MeshInstance3D.new()
 		q.mesh = _unit_quad
+		_set_flat_quad_aabb(q)  # 防视锥误剔除（退化 AABB）
 		_road_path_root.add_child(q)
 		_road_path_quads.append(q)
 	for i in _road_path_quads.size():
@@ -895,7 +1128,7 @@ func _update_markers(cam_pos: Vector3) -> void:
 	if show:
 		_hover_quad.transform = Transform3D(_quad_flat_transform, Vector3(hover.x + 0.5, 0.02, hover.y + 0.5))
 		if state.selected_tool == "demolish":
-			var can_demo := state._estate_anchor_at(hover) != Vector2i(-1, -1) or state.buildings.has(hover) or state.trees.has(hover)
+			var can_demo := state._estate_anchor_at(hover) != Vector2i(-1, -1) or state.buildings.has(hover) or state.trees.has(hover) or state.ores.has(hover)
 			_hover_quad.material_override = _flag_mat_for(Color(0.9, 0.3, 0.3, 0.3) if can_demo else Color(0.5, 0.5, 0.5, 0.2))
 		else:
 			var valid := not state._is_occupied(hover)

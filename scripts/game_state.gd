@@ -26,6 +26,13 @@ const WALKER_STEPS := 20
 const WALKER_MAX := 80
 const SPAWN_INTERVAL := 3.0
 
+# 人口曲线平衡：新迁入人口给 12 个月定居稳定期，期内不因一般条件（居所不足、
+# 一般性断粮）迁出；长期饥荒（>DEEP_FAMINE_MONTHS 月）与瘟疫/火灾等灾难不受保护（保留挑战）
+const SETTLE_MONTHS := 12  # 定居稳定期（月）：期内新移民不因一般条件迁离
+const EMIGRATE_RATE := 0.06  # 超容时稳定期外人口的月度迁出率
+const FAMINE_LOSS_DIV := 25  # 断粮流失分母：population/DIV 每月（原 20，放宽一档）
+const DEEP_FAMINE_MONTHS := 12  # 饥荒加深线：连续断粮超过该月数 = 大饥荒，稳定期保护失效（全额流失）
+
 # 住房演进参数
 const EVOLVE_HUT := 3  # 茅屋->瓦房所需达标月数
 const EVOLVE_MERGE := 3  # 瓦房->宅院所需达标月数
@@ -58,11 +65,13 @@ const BUILD_MENU := {
 	"商业": ["grocer", "market", "winery", "oilpress", "restaurant"],
 	"市政": ["well", "clinic", "repair"],
 	"工业": ["woodcutter", "loom"],
+	"矿业": ["mine", "weaponry", "goldworks"],
 }
 
 const CROP_NAMES := {"paddy": "水稻", "wheat": "小麦", "cotton": "棉花", "soy": "大豆", "grape": "葡萄"}
 const GOODS_NAMES := {"rice": "大米", "flour": "面粉", "oil": "豆油", "wine": "葡萄酒",
-	"cloth": "布匹", "food": "一级食品", "wood": "木材", "gold": "金钱"}
+	"cloth": "布匹", "food": "一级食品", "wood": "木材", "gold": "金钱",
+	"iron_ore": "铁矿", "gold_ore": "金矿", "weapons": "兵器"}
 
 var renderer: Node  # 由 Main 注入（阶段1 为 WorldRenderer3D）；仅用于把鼠标位置反算成格子（悬停格）
 
@@ -85,6 +94,7 @@ var evolve_prog: Dictionary = {}  # 居所 -> 连续达标月数
 var population := 0
 var pop_capacity := 0
 var shortage_months := 0  # 连续断粮月数：满 3 个月才开始流失人口
+var _arrivals: Array = []  # [总月数, 迁入数] 迁入流水：定居稳定期核算用（仅近 2*SETTLE_MONTHS 条）
 # 资源：五种作物 -> 加工品 -> 食品（货品价格见 buildings.json 的 sells）
 var paddy := 60.0  # 水稻
 var wheat := 0.0  # 小麦
@@ -98,6 +108,9 @@ var wine := 0.0  # 葡萄酒（酒坊出品，二级食品）
 var cloth := 0.0  # 布匹（织布坊出品，市集售卖）
 var food := 20.0  # 一级食品（粮油店出品，供百姓食用）
 var wood := 0.0  # 木材：伐木屋产出，维修站修缮消耗
+var iron_ore := 0.0  # 铁矿（矿场开采，兵器坊铸兵器）
+var gold_ore := 0.0  # 金矿（矿场开采，炼金坊炼金）
+var weapons := 0.0  # 兵器（兵器坊出品，市集售卖）
 var gold := 10000.0
 var year := 1
 var month := 1
@@ -106,6 +119,15 @@ var _months_total := 0
 # 酒楼解锁：大米/面粉/豆油/葡萄酒 各生产过一次后点亮
 var foods_produced := {"rice": false, "flour": false, "oil": false, "wine": false}
 var restaurant_unlocked := false
+
+# 矿产线：矿脉（格 -> {type: iron/gold, amount}）、矿场剩余储量（格 -> {ore, amount}）、
+# 解锁口径 = 曾经获得过（累计，非当前持有）
+var ores: Dictionary = {}
+var ore_left: Dictionary = {}
+var iron_ever := false
+var gold_ever := false
+const ORE_AMOUNT := 24  # 单矿脉储量（单位）
+const ORE_CLEAR_COST := 10  # 手动清理矿脉花费（同砍树）
 
 # 朝廷与财政
 var prestige := 0  # 声望：诏令达成 +1，失败 -1
@@ -188,6 +210,24 @@ func _generate_terrain() -> void:
 			grass[cell] = rng.randi_range(0, 1)
 			if rng.randf() < 0.05:
 				trees[cell] = true
+	# 矿脉散布（同树规则：占格、不可建造）：数量按难度区分（easy 多 poor 少）
+	# 注意：沿用同一 rng 且在树之后消费，保证树的位置与旧版逐字节一致（等价性回归）
+	var want := {"iron": 7, "gold": 4}
+	match Main.difficulty:
+		"easy":
+			want = {"iron": 10, "gold": 5}
+		"hard":
+			want = {"iron": 5, "gold": 3}
+	for ore_type: String in want:
+		var placed := 0
+		var guard := 0
+		while placed < want[ore_type] and guard < 4000:
+			guard += 1
+			var cell2 := Vector2i(rng.randi_range(2, GRID_W - 3), rng.randi_range(2, GRID_H - 3))
+			if trees.has(cell2) or ores.has(cell2):
+				continue
+			ores[cell2] = {"type": ore_type, "amount": ORE_AMOUNT}
+			placed += 1
 
 
 # ---------- 每帧推进（由 Main._process 按原有时序调用） ----------
@@ -257,7 +297,8 @@ func _estate_anchor_at(cell: Vector2i) -> Vector2i:
 
 
 func _is_occupied(cell: Vector2i) -> bool:
-	return buildings.has(cell) or trees.has(cell) or _estate_anchor_at(cell) != Vector2i(-1, -1)
+	return buildings.has(cell) or trees.has(cell) or ores.has(cell) \
+		or _estate_anchor_at(cell) != Vector2i(-1, -1)
 
 
 func _road_neighbors(cell: Vector2i) -> Array[Vector2i]:
@@ -463,15 +504,34 @@ func _try_place(cell: Vector2i) -> void:
 	if selected_tool == "demolish":
 		_try_demolish(cell)
 		return
+	var def: Dictionary = building_defs[selected_tool]
+	if selected_tool == "mine":
+		# 矿场只能建在矿脉格上：矿脉转为建筑格，剩余储量随矿井保留
+		if not ores.has(cell):
+			_say("矿场必须建在矿脉上")
+			return
+		if gold < int(def["cost_gold"]):
+			_say("金钱不足")
+			return
+		if not Main.debug_mode:
+			gold -= int(def["cost_gold"])
+		ore_left[cell] = {"ore": str(ores[cell]["type"]) + "_ore", "amount": float(ores[cell]["amount"])}
+		ores.erase(cell)
+		buildings[cell] = "mine"
+		_recompute_farm_connectivity()
+		_refresh_capacity()
+		_say("建造了 %s" % def["name"])
+		Sound.play("build")
+		hud_dirty.emit()
+		return
 	if trees.has(cell):
 		_say("这里有树木，暂不可建造")
 		return
 	if _is_occupied(cell):
 		_say("这里已被占用")
 		return
-	var def: Dictionary = building_defs[selected_tool]
-	if bool(def.get("locked", false)) and not restaurant_unlocked:
-		_say("酒楼尚未解锁：需生产过 大米、面粉、豆油、葡萄酒 四种食品")
+	if not _is_unlocked(selected_tool):
+		_say(_unlock_hint(selected_tool))
 		return
 	if gold < int(def["cost_gold"]):
 		_say("金钱不足")
@@ -484,6 +544,26 @@ func _try_place(cell: Vector2i) -> void:
 	_say("建造了 %s" % def["name"])
 	Sound.play("build")
 	hud_dirty.emit()
+
+
+## 建造解锁口径：unlock=iron/gold 用"曾经获得过"（累计，非当前持有）；locked（酒楼）沿用四食品机制
+func _is_unlocked(btype: String) -> bool:
+	var def: Dictionary = building_defs.get(btype, {})
+	match str(def.get("unlock", "")):
+		"iron":
+			return iron_ever
+		"gold":
+			return gold_ever
+	return not bool(def.get("locked", false)) or restaurant_unlocked
+
+
+func _unlock_hint(btype: String) -> String:
+	match str(building_defs.get(btype, {}).get("unlock", "")):
+		"iron":
+			return "兵器坊尚未解锁：需建矿场开采到铁矿"
+		"gold":
+			return "炼金坊尚未解锁：需建矿场开采到金矿"
+	return "酒楼尚未解锁：需生产过 大米、面粉、豆油、葡萄酒 四种食品"
 
 
 ## 铺路专用批量接口（拖拽连续铺路的提交动作）：沿路径顺序逐格铺设道路。
@@ -530,8 +610,18 @@ func _try_demolish(cell: Vector2i) -> void:
 		evolve_prog.erase(cell)
 		building_cond.erase(cell)
 		farm_grow.erase(cell)
+		ore_left.erase(cell)  # 拆除矿场：剩余储量随井废弃
 		gold += refund
 		_say("拆除了 %s，返还 %d 金" % [building_defs[btype]["name"], refund])
+	elif ores.has(cell):
+		# 清理矿脉：同砍树的口径（花 10 金立刻清除，或建矿场利用）
+		if not Main.debug_mode and gold < ORE_CLEAR_COST:
+			_say("金钱不足（清理矿脉需 %d 金，或建矿场开采）" % ORE_CLEAR_COST)
+			return
+		if not Main.debug_mode:
+			gold -= ORE_CLEAR_COST
+		ores.erase(cell)
+		_say("清理了一处矿脉（%d 金）" % (0 if Main.debug_mode else ORE_CLEAR_COST))
 	elif trees.has(cell):
 		const TREE_COST := 10
 		if not Main.debug_mode and gold < TREE_COST:
@@ -753,6 +843,22 @@ func _note_produced(item: String, amount: float) -> void:
 	build_menu_refresh.emit()
 
 
+# 采到矿的累计解锁：铁矿->兵器坊，金矿->炼金坊（"曾经获得过"口径，用掉不解锁）
+func _note_ore(ore: String, amount: float) -> void:
+	if amount <= 0.0:
+		return
+	if ore == "iron_ore" and not iron_ever:
+		iron_ever = true
+		_say("采到了铁矿！工业解锁兵器坊")
+		Sound.play("evolve")
+		build_menu_refresh.emit()
+	elif ore == "gold_ore" and not gold_ever:
+		gold_ever = true
+		_say("采到了金矿！工业解锁炼金坊")
+		Sound.play("evolve")
+		build_menu_refresh.emit()
+
+
 func _advance_month() -> void:
 	_months_total += 1
 	_recompute_farm_connectivity()
@@ -763,6 +869,7 @@ func _advance_month() -> void:
 		"paddy": paddy, "wheat": wheat, "cotton": cotton, "soy": soy, "grape": grape,
 		"rice": rice, "flour": flour, "oil": oil, "wine": wine, "cloth": cloth,
 		"food": food, "wood": wood, "gold": gold,
+		"iron_ore": iron_ore, "gold_ore": gold_ore, "weapons": weapons,
 	}
 	# DEBUG 模式：记录月初库存下限，月末任何资源跌破月初值都会被抬回（只增不减）
 	var stock_floor := {}
@@ -790,6 +897,14 @@ func _advance_month() -> void:
 			farm_grow[cell] = stage
 		if def.has("wood_per_month"):
 			stock["wood"] = float(stock["wood"]) + float(def["wood_per_month"]) * eff
+		if def.has("mine_rate"):
+			# 矿场：按人手从所压矿脉采 mine_rate*eff 单位进库存；矿脉枯竭停产（矿井保留可拆）
+			var left: Dictionary = ore_left.get(cell, {})
+			if not left.is_empty() and float(left["amount"]) > 0.0:
+				var got := minf(float(def["mine_rate"]) * eff, float(left["amount"]))
+				stock[str(left["ore"])] = float(stock[str(left["ore"])]) + got
+				left["amount"] = float(left["amount"]) - got
+				_note_ore(str(left["ore"]), got)
 		for cv: Dictionary in def.get("converts", []):
 			var use: float = minf(float(cv["rate"]) * eff, float(stock[cv["from"]]))
 			if use > 0.0:
@@ -827,6 +942,9 @@ func _advance_month() -> void:
 	cloth = stock["cloth"]
 	food = stock["food"]
 	wood = stock["wood"]
+	iron_ore = stock["iron_ore"]
+	gold_ore = stock["gold_ore"]
+	weapons = stock["weapons"]
 	gold = stock["gold"]
 	if Main.debug_mode:
 		for k: String in stock_floor:
@@ -853,6 +971,7 @@ func _advance_month() -> void:
 		if population < eff_capacity:
 			var vacancy2 := eff_capacity - population
 			var influx2 := maxi(2, int(ceil(vacancy2 * 0.25 * _diff("growth"))))
+			_note_arrival(mini(eff_capacity, population + influx2) - population)
 			population = mini(eff_capacity, population + influx2)
 	elif food >= consumption:
 		food -= consumption
@@ -861,6 +980,7 @@ func _advance_month() -> void:
 		if population < eff_capacity:
 			var vacancy := eff_capacity - population
 			var influx := maxi(2, int(ceil(vacancy * 0.25 * _diff("growth"))))
+			_note_arrival(mini(eff_capacity, population + influx) - population)
 			population = mini(eff_capacity, population + influx)
 	elif population > 0:
 		food = 0.0
@@ -873,9 +993,24 @@ func _advance_month() -> void:
 			else:
 				_say("存粮不足，百姓已在挨饿（连续断粮三月将致人口流失）")
 		else:
-			# 断粮超三个月：无论囤了多少原粮都开始流失人口
-			population = maxi(0, population - maxi(1, population / 20))
+			# 断粮迁出：定居稳定期内的新移民不迁出（曲线平滑）；
+			# 连续断粮超 DEEP_FAMINE_MONTHS 月 = 大饥荒，保护失效全额流失（硬惩罚保留）
+			var famine_loss := maxi(1, population / FAMINE_LOSS_DIV)
+			var settled2: int = maxi(0, population - _new_settler_count())
+			var loss: int = mini(famine_loss, settled2)
+			if loss < famine_loss and shortage_months > DEEP_FAMINE_MONTHS:
+				loss = famine_loss
+			population = maxi(0, population - loss)
 			_say("饥荒！人口下降")
+
+	# 一般条件迁出：居所不足（火灾烧毁/失去行人服务）时，仅稳定期外人口按月温和流失；
+	# 近 SETTLE_MONTHS 月迁入的新移民处于定居稳定期，不因这类一般条件离开
+	if population > eff_capacity:
+		var settled: int = maxi(0, population - _new_settler_count())
+		var leave: int = mini(population - eff_capacity, maxi(1, int(ceil(settled * EMIGRATE_RATE))))
+		if leave > 0:
+			population -= leave
+			_say("居所不足，%d 位百姓迁离了治所" % leave)
 
 	# 住房演进（需吃饱 + 有服务）
 	_evolve_housing(fed)
@@ -1078,6 +1213,24 @@ func _occupants(cap: int) -> int:
 	return int(round(population * cap / pop_capacity)) if pop_capacity > 0 else 0
 
 
+## 迁入登记：记入流水供定居稳定期核算（只保留近 2*SETTLE_MONTHS 条）
+func _note_arrival(n: int) -> void:
+	if n <= 0:
+		return
+	_arrivals.append([_months_total, n])
+	while _arrivals.size() > SETTLE_MONTHS * 2:
+		_arrivals.pop_front()
+
+
+## 定居稳定期内（近 SETTLE_MONTHS 个月）累计迁入人口：期内不因一般条件迁离
+func _new_settler_count() -> int:
+	var n := 0
+	for entry in _arrivals:
+		if _months_total - int(entry[0]) < SETTLE_MONTHS:
+			n += int(entry[1])
+	return n
+
+
 func _repair_cost(key: Vector2i, base_cost: int) -> int:
 	return maxi(1, (100 - _cond_of(key)) * base_cost / 100)
 
@@ -1110,6 +1263,14 @@ func _build_state() -> Dictionary:
 	var grow_list := []
 	for cell: Vector2i in farm_grow:
 		grow_list.append({"x": cell.x, "y": cell.y, "stage": farm_grow[cell]})
+	var ore_list := []
+	for cell: Vector2i in ores:
+		ore_list.append({"x": cell.x, "y": cell.y, "type": ores[cell]["type"],
+			"amount": float(ores[cell]["amount"])})
+	var ore_left_list := []
+	for cell: Vector2i in ore_left:
+		ore_left_list.append({"x": cell.x, "y": cell.y, "ore": ore_left[cell]["ore"],
+			"amount": float(ore_left[cell]["amount"])})
 	return {
 		"population": population,
 		"paddy": paddy,
@@ -1124,7 +1285,15 @@ func _build_state() -> Dictionary:
 		"cloth": cloth,
 		"food": food,
 		"wood": wood,
+		"iron_ore": iron_ore,
+		"gold_ore": gold_ore,
+		"weapons": weapons,
 		"gold": gold,
+		"iron_ever": iron_ever,
+		"gold_ever": gold_ever,
+		"ores": ore_list,
+		"ore_left": ore_left_list,
+		"arrivals": _arrivals.duplicate(),
 		"foods_produced": foods_produced,
 		"year": year,
 		"month": month,
@@ -1163,7 +1332,12 @@ func _apply_state(state: Dictionary) -> void:
 	cloth = float(state.get("cloth", 0.0))
 	food = float(state.get("food", 20.0))
 	wood = float(state.get("wood", 0.0))
+	iron_ore = float(state.get("iron_ore", 0.0))
+	gold_ore = float(state.get("gold_ore", 0.0))
+	weapons = float(state.get("weapons", 0.0))
 	gold = float(state["gold"])
+	iron_ever = bool(state.get("iron_ever", false))
+	gold_ever = bool(state.get("gold_ever", false))
 	foods_produced = {"rice": false, "flour": false, "oil": false, "wine": false}
 	for k: String in foods_produced:
 		foods_produced[k] = bool(state.get("foods_produced", {}).get(k, false))
@@ -1179,6 +1353,13 @@ func _apply_state(state: Dictionary) -> void:
 	buildings.clear()
 	estates.clear()
 	trees.clear()
+	ores.clear()
+	ore_left.clear()
+	_arrivals.clear()
+	_arrivals = state.get("arrivals", [])
+	for e in _arrivals:  # JSON 往返数字变浮点，收敛回整数
+		e[0] = int(e[0])
+		e[1] = int(e[1])
 	serviced.clear()
 	watered.clear()
 	doctored.clear()
@@ -1205,6 +1386,12 @@ func _apply_state(state: Dictionary) -> void:
 		estates[Vector2i(int(entry["x"]), int(entry["y"]))] = int(entry["tier"])
 	for entry: Dictionary in state.get("trees", []):
 		trees[Vector2i(int(entry["x"]), int(entry["y"]))] = true
+	for entry: Dictionary in state.get("ores", []):  # 老存档无此字段：默认空（兼容）
+		ores[Vector2i(int(entry["x"]), int(entry["y"]))] = {
+			"type": str(entry["type"]), "amount": float(entry["amount"])}
+	for entry: Dictionary in state.get("ore_left", []):
+		ore_left[Vector2i(int(entry["x"]), int(entry["y"]))] = {
+			"ore": str(entry["ore"]), "amount": float(entry["amount"])}
 	_refresh_capacity()
 	_recompute_farm_connectivity()
 	_assign_jobs()  # 读档后 employed 已清空，必须重新分配岗位

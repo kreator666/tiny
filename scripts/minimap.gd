@@ -33,6 +33,12 @@ func _draw() -> void:
 	for cell: Vector2i in state.trees:
 		draw_rect(Rect2(cell.x * sx, cell.y * sy, sx, sy), Color(0.2, 0.42, 0.2))
 
+	# 矿脉：铁矿青灰点 / 金矿土黄点（弱于建筑的 2/3 尺寸点）
+	for cell: Vector2i in state.ores:
+		var iron: bool = state.ores[cell]["type"] == "iron"
+		var ocol := Color(0.42, 0.47, 0.55) if iron else Color(0.85, 0.7, 0.3)
+		draw_rect(Rect2(cell.x * sx + sx * 0.17, cell.y * sy + sy * 0.17, sx * 0.66, sy * 0.66), ocol)
+
 	for cell: Vector2i in state.buildings:
 		if state.buildings[cell] == "road":
 			draw_rect(Rect2(cell.x * sx, cell.y * sy, sx, sy), Color(0.55, 0.53, 0.5))

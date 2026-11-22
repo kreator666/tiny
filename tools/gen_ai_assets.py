@@ -73,6 +73,10 @@ BUILDINGS_1X1 = {
     "restaurant": "two-story Chinese tavern with dark blue-grey tiled roofs, red paper lanterns hanging under the eaves, a red banner flag with a wine cup symbol, wooden balcony",
     "clinic": "traditional Chinese medicine hall with grey brick walls and dark tiled roof, hanging wooden signboard, bundles of dried herbs under the eaves, ceramic medicine jars by the door",
     "repair": "traditional Chinese carpenter repair workshop with grey brick walls and dark tiled roof, stacks of wooden planks and timber logs beside it, wooden sawhorse and tool rack in front",
+    # 矿产线：矿场井架矿车 / 兵器坊刀枪架火炉 / 炼金坊丹炉烟囱
+    "mine": "mining pit with a heavy timber headframe derrick tower, large pulley wheel on top, a small wooden ore cart full of dark grey iron rocks beside the shaft, wooden support beams and ropes",
+    "weaponry": "ancient Chinese weapons workshop, open wooden shed with racks of spears halberds and pole weapons standing in rows, a glowing forge furnace at one side, weapon racks and a quench barrel",
+    "goldworks": "ancient Chinese alchemy workshop with a round clay alchemy furnace with domed top, a tall thin brick chimney rising high beside it, brass crucible vessels, wisps of smoke",
 }
 
 ESTATES = {
